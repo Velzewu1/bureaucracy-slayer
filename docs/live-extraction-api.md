@@ -232,6 +232,27 @@ The Live provider owns exactly one `AbortController` and one timer per analysis:
 6. Aborting or navigating away stops client requests only. It does not create a server cancellation claim and does not start a replacement extraction.
 7. Retain `jobId` in the Live mode workspace while that workspace exists, allowing polling to resume without a second POST.
 
+The browser also persists one strictly parsed, versioned recovery record in
+`sessionStorage` so a full document reload does not discard paid-work identity.
+The record contains only `requestId`, its creation time, and, after a validated
+start response, `jobId` plus the contract-validated `statusUrl`. It never contains
+API keys, snapshots, models, evidence, user facts, response bodies, or plans.
+
+- Write the request-only record before the first POST. A reload in this state
+  treats the outcome as ambiguous and may repeat only the same idempotent
+  `requestId`.
+- Replace it with the job record immediately after the start response passes the
+  shared schema. A reload in this state polls the original `statusUrl` without a
+  second POST.
+- A request-only record older than the server's safe idempotency-retention window,
+  an unknown schema version, an extra field, malformed JSON, or a mismatched
+  `jobId`/`statusUrl` blocks Live start in that tab. It must not be converted into
+  a new request ID.
+- Clear recovery metadata only after a verified success, a typed terminal failure,
+  a definitive start rejection, or typed `JOB_EXPIRED`/`JOB_NOT_FOUND` handling.
+  Stopping polling, switching modes, navigation, bfcache, transport errors, and
+  malformed responses retain it.
+
 On success the provider must:
 
 1. Strict-parse the complete artifact.

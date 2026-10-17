@@ -21,8 +21,10 @@ import {
 import {
   LIVE_DEMO_GOAL,
   LIVE_DEMO_PORTAL_URL,
+  LIVE_EXTRACTION_RECOVERY_STORAGE_KEY,
   LiveExtractionClientError,
   LiveExtractionProvider,
+  type LiveExtractionRecoveryStorage,
 } from "../../src/ui/adapters/liveExtractionProvider.js";
 import {
   LiveArtifactIntegrityError,
@@ -47,6 +49,7 @@ const createdAt = "2026-10-17T12:00:00.000Z";
 const completedAt = "2026-10-17T12:01:00.000Z";
 const expiresAt = "2026-10-17T12:16:00.000Z";
 const fixedNow = () => completedAt;
+const fixedNowMs = () => Date.parse(completedAt);
 
 function localUrl(url: string): string {
   const parsed = new URL(url);
@@ -285,6 +288,45 @@ function jsonResponse(body: unknown, statusCode = 200): Response {
   });
 }
 
+function memoryStorage(initialValue?: string): LiveExtractionRecoveryStorage & {
+  value(): string | null;
+} {
+  let value = initialValue ?? null;
+  return {
+    getItem: (key) => key === LIVE_EXTRACTION_RECOVERY_STORAGE_KEY ? value : null,
+    setItem: (key, nextValue) => {
+      if (key === LIVE_EXTRACTION_RECOVERY_STORAGE_KEY) value = nextValue;
+    },
+    removeItem: (key) => {
+      if (key === LIVE_EXTRACTION_RECOVERY_STORAGE_KEY) value = null;
+    },
+    value: () => value,
+  };
+}
+
+function storedRequest(
+  createdAtMs = fixedNowMs(),
+  storedRequestId: string = requestId,
+): string {
+  return JSON.stringify({
+    schemaVersion: 1,
+    kind: "request",
+    requestId: storedRequestId,
+    createdAtMs,
+  });
+}
+
+function storedJob(): string {
+  return JSON.stringify({
+    schemaVersion: 1,
+    kind: "job",
+    requestId,
+    createdAtMs: fixedNowMs(),
+    jobId,
+    statusUrl: `/api/live-extraction/jobs/${jobId}`,
+  });
+}
+
 function providerFor(
   responses: readonly Readonly<{ body: unknown; status?: number }>[],
 ) {
@@ -373,6 +415,209 @@ describe("LiveExtractionProvider", () => {
     expect(duplicate).toBe(first);
     await expect(first).resolves.toMatchObject({ mode: "live_sonnet" });
     expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  });
+
+  it.each(["accepted", "running"] as const)(
+    "restores the same job after refresh while it is %s without another POST",
+    async (refreshPoint) => {
+      const storage = memoryStorage();
+      let waitCount = 0;
+      const waitUntilStopped = async (_milliseconds: number, signal: AbortSignal) => {
+        waitCount += 1;
+        if (refreshPoint === "running" && waitCount === 1) return;
+        await new Promise<void>((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("Stopped for refresh.", "AbortError")),
+            { once: true },
+          );
+        });
+      };
+      let firstFetchCount = 0;
+      const firstFetch = vi.fn(async (): Promise<Response> => {
+        firstFetchCount += 1;
+        if (firstFetchCount === 1) return jsonResponse(startResponse(), 202);
+        if (firstFetchCount === 2 && refreshPoint === "running") {
+          return jsonResponse(status("collecting"));
+        }
+        throw new Error("Unexpected pre-refresh fetch");
+      });
+      const beforeRefresh = new LiveExtractionProvider({
+        fetch: firstFetch,
+        generateRequestId: () => requestId,
+        now: fixedNow,
+        nowMs: fixedNowMs,
+        storage,
+        wait: waitUntilStopped,
+      });
+
+      const interrupted = beforeRefresh.analyze(request());
+      await vi.waitFor(() => {
+        expect(firstFetch).toHaveBeenCalledTimes(refreshPoint === "running" ? 2 : 1);
+        expect(JSON.parse(storage.value() ?? "null")).toMatchObject({
+          kind: "job",
+          requestId,
+          jobId,
+        });
+      });
+      beforeRefresh.stop("component_unmounted");
+      await expect(interrupted).rejects.toMatchObject({ code: "CLIENT_STOPPED" });
+
+      const resumedFetch = vi.fn(
+        async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> =>
+          jsonResponse(succeeded(demoLiveArtifact())),
+      );
+      const afterRefresh = new LiveExtractionProvider({
+        fetch: resumedFetch,
+        generateRequestId: () => {
+          throw new Error("A recovered job must not generate a new request ID");
+        },
+        now: fixedNow,
+        nowMs: fixedNowMs,
+        storage,
+        wait: async () => {},
+      });
+
+      expect(afterRefresh.resumeState()).toBe("job");
+      await expect(afterRefresh.analyze(request())).resolves.toMatchObject({
+        mode: "live_sonnet",
+      });
+      expect(resumedFetch.mock.calls.every(([, init]) => init?.method === "GET")).toBe(true);
+      expect(resumedFetch.mock.calls[0]?.[0]).toBe(
+        `/api/live-extraction/jobs/${jobId}`,
+      );
+      expect(storage.value()).toBeNull();
+    },
+  );
+
+  it("retries an ambiguous refreshed POST with the same request ID and one physical job", async () => {
+    const storage = memoryStorage();
+    let acceptedRequestId: string | undefined;
+    let physicalJobs = 0;
+    let postAttempts = 0;
+    const postedRequestIds: string[] = [];
+    const fetch = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+        if (init?.method === "POST") {
+          if (typeof init.body !== "string") throw new Error("POST body is unavailable");
+          const posted = LiveExtractionStartRequestSchema.parse(JSON.parse(init.body));
+          postedRequestIds.push(posted.requestId);
+          postAttempts += 1;
+          if (acceptedRequestId === undefined) {
+            acceptedRequestId = posted.requestId;
+            physicalJobs += 1;
+          }
+          if (postAttempts === 1) throw new TypeError("Response was lost after acceptance");
+          expect(posted.requestId).toBe(acceptedRequestId);
+          return jsonResponse(startResponse(), 202);
+        }
+        return jsonResponse(succeeded(demoLiveArtifact()));
+      },
+    );
+    const beforeRefresh = new LiveExtractionProvider({
+      fetch,
+      generateRequestId: () => requestId,
+      now: fixedNow,
+      nowMs: fixedNowMs,
+      storage,
+      wait: async () => {},
+    });
+
+    await expect(beforeRefresh.analyze(request())).rejects.toMatchObject({
+      code: "TRANSPORT_ERROR",
+    });
+    expect(beforeRefresh.resumeState()).toBe("request");
+    expect(JSON.parse(storage.value() ?? "null")).toMatchObject({
+      kind: "request",
+      requestId,
+    });
+
+    const afterRefresh = new LiveExtractionProvider({
+      fetch,
+      generateRequestId: () => {
+        throw new Error("Ambiguous recovery must reuse the stored request ID");
+      },
+      now: fixedNow,
+      nowMs: fixedNowMs,
+      storage,
+      wait: async () => {},
+    });
+    expect(afterRefresh.resumeState()).toBe("request");
+    await expect(afterRefresh.analyze(request())).resolves.toMatchObject({
+      mode: "live_sonnet",
+    });
+    expect(postedRequestIds).toEqual([requestId, requestId]);
+    expect(physicalJobs).toBe(1);
+    expect(storage.value()).toBeNull();
+  });
+
+  it.each([
+    ["invalid JSON", "{"],
+    ["unknown field", JSON.stringify({
+      schemaVersion: 1,
+      kind: "request",
+      requestId,
+      createdAtMs: fixedNowMs(),
+      injected: true,
+    })],
+    ["mismatched status URL", JSON.stringify({
+      schemaVersion: 1,
+      kind: "job",
+      requestId,
+      createdAtMs: fixedNowMs(),
+      jobId,
+      statusUrl: "/api/live-extraction/jobs/job_cccccccccccccccccccccccccccccccc",
+    })],
+    ["stale unresolved request", storedRequest(fixedNowMs() - 15 * 60_000)],
+  ])("blocks %s recovery metadata without sending a request", async (_name, serialized) => {
+    const storage = memoryStorage(serialized);
+    const fetch = vi.fn(async () => jsonResponse(startResponse(), 202));
+    const generateRequestId = vi.fn(() => requestId);
+    const provider = new LiveExtractionProvider({
+      fetch,
+      generateRequestId,
+      nowMs: fixedNowMs,
+      storage,
+    });
+
+    expect(provider.resumeState()).toBe("blocked");
+    await expect(provider.analyze(request())).rejects.toMatchObject({
+      code: "RECOVERY_STATE_INVALID",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(generateRequestId).not.toHaveBeenCalled();
+    expect(storage.value()).toBe(serialized);
+  });
+
+  it.each([
+    ["JOB_EXPIRED", 410],
+    ["JOB_NOT_FOUND", 404],
+  ] as const)("clears a recovered job after typed %s", async (code, statusCode) => {
+    const storage = memoryStorage(storedJob());
+    const fetch = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) => jsonResponse({
+        schemaVersion: 1,
+        error: {
+          code,
+          stage: "job",
+          message: "The retained job is unavailable.",
+          retryable: true,
+          issueCodes: [],
+        },
+      }, statusCode),
+    );
+    const provider = new LiveExtractionProvider({
+      fetch,
+      nowMs: fixedNowMs,
+      storage,
+      wait: async () => {},
+    });
+
+    expect(provider.resumeState()).toBe("job");
+    await expect(provider.analyze(request())).rejects.toMatchObject({ code });
+    expect(fetch.mock.calls.every(([, init]) => init?.method === "GET")).toBe(true);
+    expect(provider.resumeState()).toBe("none");
+    expect(storage.value()).toBeNull();
   });
 
   it("retains only the latest successful live session", async () => {
@@ -656,6 +901,26 @@ describe("LiveExtractionProvider", () => {
     });
     expect(transport.resumeState()).toBe("request");
 
+    const proxyStorage = memoryStorage();
+    const proxyFailure = new LiveExtractionProvider({
+      fetch: async () => new Response("", {
+        status: 500,
+        headers: { "Content-Type": "text/plain" },
+      }),
+      generateRequestId: () => requestId,
+      nowMs: fixedNowMs,
+      storage: proxyStorage,
+    });
+    await expect(proxyFailure.analyze(request())).rejects.toMatchObject({
+      code: "TRANSPORT_ERROR",
+      message: expect.stringContaining("local proxy"),
+    });
+    expect(proxyFailure.resumeState()).toBe("request");
+    expect(JSON.parse(proxyStorage.value() ?? "null")).toMatchObject({
+      kind: "request",
+      requestId,
+    });
+
     const ambiguousInternal = providerFor([
       {
         status: 500,
@@ -677,12 +942,40 @@ describe("LiveExtractionProvider", () => {
     expect(ambiguousInternal.resumeState()).toBe("request");
 
     const malformedJson = new LiveExtractionProvider({
-      fetch: async () => new Response("{", { status: 202 }),
+      fetch: async () => new Response("{", {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      }),
       generateRequestId: () => requestId,
     });
     await expect(malformedJson.analyze(request())).rejects.toMatchObject({
       code: "MALFORMED_RESPONSE",
     });
+  });
+
+  it("does not expose retry state while the initial POST is still pending", async () => {
+    const fetch = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Stopped while pending.", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    const provider = new LiveExtractionProvider({
+      fetch,
+      generateRequestId: () => requestId,
+      storage: memoryStorage(),
+    });
+
+    const pending = provider.analyze(request());
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    expect(provider.resumeState()).toBe("none");
+    provider.stop("user_cancelled");
+    await expect(pending).rejects.toMatchObject({ code: "CLIENT_STOPPED" });
+    expect(provider.resumeState()).toBe("request");
   });
 
   it("uses a new request ID after a definitive start rejection", async () => {

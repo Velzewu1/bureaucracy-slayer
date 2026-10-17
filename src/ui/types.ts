@@ -54,7 +54,7 @@ export type AnalysisRunOptions = Readonly<{
   onProgress?: (progress: AnalysisProgress) => void;
 }>;
 
-export type LiveResumeState = "none" | "request" | "job";
+export type LiveResumeState = "none" | "request" | "job" | "blocked";
 
 export type DemoAnalysis = Readonly<{
   sessionId: string;

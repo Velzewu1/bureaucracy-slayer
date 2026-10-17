@@ -5,6 +5,7 @@ type AppHeaderProps = Readonly<{
   reanalyzeLabel: string;
   busyLabel: string;
   isBusy: boolean;
+  isAnalyzeDisabled?: boolean;
   hasAnalysis: boolean;
   onAnalyze: () => void;
 }>;
@@ -16,6 +17,7 @@ export function AppHeader({
   reanalyzeLabel,
   busyLabel,
   isBusy,
+  isAnalyzeDisabled = false,
   hasAnalysis,
   onAnalyze,
 }: AppHeaderProps) {
@@ -45,7 +47,12 @@ export function AppHeader({
           <span className="mode-pill__dot" aria-hidden="true" />
           {modeLabel}
         </span>
-        <button className="button button--primary" type="button" onClick={onAnalyze} disabled={isBusy}>
+        <button
+          className="button button--primary"
+          type="button"
+          onClick={onAnalyze}
+          disabled={isBusy || isAnalyzeDisabled}
+        >
           {isBusy ? (
             <>
               <span className="spinner" aria-hidden="true" />

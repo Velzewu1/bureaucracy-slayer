@@ -8,7 +8,7 @@ import {
   LIVE_DEMO_PORTAL_URL,
 } from "../../src/ui/adapters/liveExtractionProvider.js";
 import { recordedExtractionBundle } from "../../src/ui/adapters/recordedExtractionProvider.js";
-import { App } from "../../src/ui/App.js";
+import { App, deriveLiveRecoveryControls } from "../../src/ui/App.js";
 import { ModeSelector } from "../../src/ui/components/ModeSelector.js";
 import {
   demoGoal,
@@ -196,5 +196,40 @@ describe("UI mode state", () => {
     expect(retryMarkup).toContain("same idempotent start request");
     expect(resumeMarkup).toContain("Resume live extraction");
     expect(resumeMarkup).toContain("without starting another paid extraction");
+  });
+
+  it("suppresses recovery actions while extraction is actively running", () => {
+    expect(deriveLiveRecoveryControls("analyzing", "request")).toEqual({
+      canResume: false,
+      canRetryAmbiguous: false,
+    });
+    expect(deriveLiveRecoveryControls("analyzing", "job")).toEqual({
+      canResume: false,
+      canRetryAmbiguous: false,
+    });
+    expect(deriveLiveRecoveryControls(null, "request")).toEqual({
+      canResume: false,
+      canRetryAmbiguous: true,
+    });
+  });
+
+  it("renders invalid recovery metadata as blocked without changing other modes", () => {
+    const blockedMarkup = renderToStaticMarkup(
+      createElement(App, {
+        initialMode: "live_sonnet",
+        providers: { live_sonnet: resumableProvider("blocked") },
+      }),
+    );
+    const fixtureMarkup = renderToStaticMarkup(
+      createElement(App, { initialMode: "verified_fixture" }),
+    );
+    const recordedMarkup = renderToStaticMarkup(
+      createElement(App, { initialMode: "recorded_sonnet" }),
+    );
+
+    expect(blockedMarkup).toContain("Live recovery blocked");
+    expect(blockedMarkup).toContain("No backend request will be sent");
+    expect(fixtureMarkup).toContain("Verified fixture");
+    expect(recordedMarkup).toContain("Recorded Sonnet extraction");
   });
 });

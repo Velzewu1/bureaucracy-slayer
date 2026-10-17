@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import {
   UserStateSchema,
   hashCanonical,
@@ -9,12 +11,16 @@ import { evaluatePolicies, planActions } from "../../engine/index.js";
 import {
   LIVE_EXTRACTION_POLL_INTERVAL_MS,
   LIVE_EXTRACTION_START_ROUTE,
+  LIVE_EXTRACTION_TERMINAL_RETENTION_MS,
   LiveExtractionErrorResponseSchema,
+  LiveExtractionJobIdSchema,
   LiveExtractionJobStatusSchema,
+  LiveExtractionRequestIdSchema,
   LiveExtractionStartRequestSchema,
   LiveExtractionStartResponseSchema,
   type LiveExtractionClientStopReason,
   type LiveExtractionFailureCode,
+  type LiveExtractionJobId,
   type LiveExtractionJobStatus,
   type LiveExtractionRequestId,
 } from "../../orchestration/live-extraction-contract.js";
@@ -46,6 +52,7 @@ export type LiveExtractionClientErrorCode =
   | "RESPONSE_IDENTITY_MISMATCH"
   | "GOAL_MISMATCH"
   | "PORTAL_MISMATCH"
+  | "RECOVERY_STATE_INVALID"
   | "SESSION_MISSING"
   | "CLIENT_STOPPED";
 
@@ -76,17 +83,53 @@ type FetchImplementation = (
 
 type WaitImplementation = (milliseconds: number, signal: AbortSignal) => Promise<void>;
 
+export const LIVE_EXTRACTION_RECOVERY_STORAGE_KEY =
+  "bureaucracy-slayer.live-extraction.recovery.v1";
+
+const LIVE_EXTRACTION_REQUEST_RECOVERY_MAX_AGE_MS =
+  LIVE_EXTRACTION_TERMINAL_RETENTION_MS - 60_000;
+const LIVE_EXTRACTION_RECOVERY_CLOCK_SKEW_MS = 60_000;
+
+export type LiveExtractionRecoveryStorage = Pick<
+  Storage,
+  "getItem" | "setItem" | "removeItem"
+>;
+
+const LiveExtractionRecoveryMetadataSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      schemaVersion: z.literal(1),
+      kind: z.literal("request"),
+      requestId: LiveExtractionRequestIdSchema,
+      createdAtMs: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      schemaVersion: z.literal(1),
+      kind: z.literal("job"),
+      requestId: LiveExtractionRequestIdSchema,
+      createdAtMs: z.number().int().nonnegative(),
+      jobId: LiveExtractionJobIdSchema,
+      statusUrl: z.string().min(1),
+    })
+    .strict(),
+]);
+
 export type LiveExtractionProviderOptions = Readonly<{
   fetch?: FetchImplementation;
   generateRequestId?: () => LiveExtractionRequestId;
   now?: () => string;
+  nowMs?: () => number;
+  storage?: LiveExtractionRecoveryStorage;
   wait?: WaitImplementation;
 }>;
 
 type ActiveRequest = {
   requestId: LiveExtractionRequestId;
   requestState: "pending" | "ambiguous";
-  jobId?: string;
+  createdAtMs: number;
+  jobId?: LiveExtractionJobId;
   statusUrl?: string;
 };
 
@@ -141,6 +184,25 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException
     ? error.name === "AbortError"
     : error instanceof Error && error.name === "AbortError";
+}
+
+function isJsonResponse(response: Response): boolean {
+  const contentType = response.headers.get("content-type");
+  if (contentType === null) return false;
+  const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase();
+  return mediaType === "application/json" || mediaType?.endsWith("+json") === true;
+}
+
+function browserSessionStorage(): Readonly<{
+  storage?: LiveExtractionRecoveryStorage;
+  unavailable: boolean;
+}> {
+  if (typeof window === "undefined") return { unavailable: false };
+  try {
+    return { storage: window.sessionStorage, unavailable: false };
+  } catch {
+    return { unavailable: true };
+  }
 }
 
 async function parseJson(response: Response, signal: AbortSignal): Promise<unknown> {
@@ -199,17 +261,120 @@ export class LiveExtractionProvider implements DemoDataProvider {
   readonly #fetch: FetchImplementation;
   readonly #generateRequestId: () => LiveExtractionRequestId;
   readonly #now: () => string;
+  readonly #nowMs: () => number;
+  readonly #storage: LiveExtractionRecoveryStorage | undefined;
   readonly #wait: WaitImplementation;
+  #recoveryBlocked: boolean;
   #session: LiveSession | undefined;
   #activeRequest: ActiveRequest | undefined;
   #operation: Operation | undefined;
   #inFlight: Promise<DemoAnalysis> | undefined;
 
   constructor(options: LiveExtractionProviderOptions = {}) {
+    const defaultStorage = browserSessionStorage();
     this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.#generateRequestId = options.generateRequestId ?? generateRequestId;
     this.#now = options.now ?? (() => new Date().toISOString());
+    this.#nowMs = options.nowMs ?? Date.now;
+    this.#storage = options.storage ?? defaultStorage.storage;
     this.#wait = options.wait ?? wait;
+    this.#recoveryBlocked = options.storage === undefined && defaultStorage.unavailable;
+    this.#restoreRecovery();
+  }
+
+  #restoreRecovery(): void {
+    if (this.#storage === undefined || this.#recoveryBlocked) return;
+    let serialized: string | null;
+    try {
+      serialized = this.#storage.getItem(LIVE_EXTRACTION_RECOVERY_STORAGE_KEY);
+    } catch {
+      this.#recoveryBlocked = true;
+      return;
+    }
+    if (serialized === null) return;
+    let input: unknown;
+    try {
+      input = JSON.parse(serialized);
+    } catch {
+      this.#recoveryBlocked = true;
+      return;
+    }
+    const parsed = LiveExtractionRecoveryMetadataSchema.safeParse(input);
+    if (!parsed.success) {
+      this.#recoveryBlocked = true;
+      return;
+    }
+    const metadata = parsed.data;
+    if (metadata.kind === "job") {
+      if (metadata.statusUrl !== `${LIVE_EXTRACTION_START_ROUTE}/${metadata.jobId}`) {
+        this.#recoveryBlocked = true;
+        return;
+      }
+      this.#activeRequest = {
+        requestId: metadata.requestId,
+        requestState: "ambiguous",
+        createdAtMs: metadata.createdAtMs,
+        jobId: metadata.jobId,
+        statusUrl: metadata.statusUrl,
+      };
+      return;
+    }
+    const ageMs = this.#nowMs() - metadata.createdAtMs;
+    if (
+      ageMs < -LIVE_EXTRACTION_RECOVERY_CLOCK_SKEW_MS ||
+      ageMs >= LIVE_EXTRACTION_REQUEST_RECOVERY_MAX_AGE_MS
+    ) {
+      this.#recoveryBlocked = true;
+      return;
+    }
+    this.#activeRequest = {
+      requestId: metadata.requestId,
+      requestState: "ambiguous",
+      createdAtMs: metadata.createdAtMs,
+    };
+  }
+
+  #persistRecovery(active: ActiveRequest, required: boolean): void {
+    if (this.#storage === undefined) return;
+    const metadata =
+      active.jobId !== undefined && active.statusUrl !== undefined
+        ? {
+            schemaVersion: 1 as const,
+            kind: "job" as const,
+            requestId: active.requestId,
+            createdAtMs: active.createdAtMs,
+            jobId: active.jobId,
+            statusUrl: active.statusUrl,
+          }
+        : {
+            schemaVersion: 1 as const,
+            kind: "request" as const,
+            requestId: active.requestId,
+            createdAtMs: active.createdAtMs,
+          };
+    try {
+      this.#storage.setItem(
+        LIVE_EXTRACTION_RECOVERY_STORAGE_KEY,
+        JSON.stringify(LiveExtractionRecoveryMetadataSchema.parse(metadata)),
+      );
+    } catch {
+      if (!required) return;
+      this.#recoveryBlocked = true;
+      throw new LiveExtractionClientError(
+        "RECOVERY_STATE_INVALID",
+        "Live extraction could not start because recovery metadata could not be stored safely.",
+      );
+    }
+  }
+
+  #clearRecovery(): void {
+    this.#activeRequest = undefined;
+    if (this.#storage === undefined) return;
+    try {
+      this.#storage.removeItem(LIVE_EXTRACTION_RECOVERY_STORAGE_KEY);
+    } catch {
+      // A retained known job remains safe to re-read; never replace it with a new ID here.
+    }
   }
 
   #emit(
@@ -227,6 +392,18 @@ export class LiveExtractionProvider implements DemoDataProvider {
     expectedStatus: number,
     signal: AbortSignal,
   ): Promise<unknown> {
+    if (!isJsonResponse(response)) {
+      if (response.status >= 500 && response.status <= 599) {
+        throw new LiveExtractionClientError(
+          "TRANSPORT_ERROR",
+          "The live extraction API is unavailable through the local proxy. The backend job may still be running.",
+        );
+      }
+      throw new LiveExtractionClientError(
+        "MALFORMED_RESPONSE",
+        "The live extraction server returned a response that was not declared as JSON.",
+      );
+    }
     const body = await parseJson(response, signal);
     signal.throwIfAborted();
     if (response.status === expectedStatus) return body;
@@ -280,6 +457,7 @@ export class LiveExtractionProvider implements DemoDataProvider {
     }
     active.jobId = parsed.data.jobId;
     active.statusUrl = parsed.data.statusUrl;
+    this.#persistRecovery(active, false);
     return { jobId: parsed.data.jobId, statusUrl: parsed.data.statusUrl };
   }
 
@@ -394,13 +572,22 @@ export class LiveExtractionProvider implements DemoDataProvider {
       );
     }
 
-    const active =
-      this.#activeRequest ??
-      {
+    if (this.#recoveryBlocked && this.#activeRequest === undefined) {
+      throw new LiveExtractionClientError(
+        "RECOVERY_STATE_INVALID",
+        "Stored live extraction recovery metadata was invalid or too old to retry safely. Close this tab to begin a new browser session.",
+      );
+    }
+    let active = this.#activeRequest;
+    if (active === undefined) {
+      active = {
         requestId: this.#generateRequestId(),
         requestState: "pending",
+        createdAtMs: this.#nowMs(),
       };
-    this.#activeRequest = active;
+      this.#activeRequest = active;
+      this.#persistRecovery(active, true);
+    }
     this.#emit(options, "queued");
 
     try {
@@ -413,7 +600,7 @@ export class LiveExtractionProvider implements DemoDataProvider {
         options,
       );
       if (status.state === "failed") {
-        this.#activeRequest = undefined;
+        this.#clearRecovery();
         const heading = failureHeadings[status.error.code];
         throw new LiveExtractionClientError(
           status.error.code,
@@ -421,7 +608,6 @@ export class LiveExtractionProvider implements DemoDataProvider {
         );
       }
 
-      this.#activeRequest = undefined;
       const verified = verifyLiveExtractionArtifact(status.result);
       if (verified.artifact.goal !== LIVE_DEMO_GOAL) {
         throw new LiveExtractionClientError(
@@ -440,6 +626,7 @@ export class LiveExtractionProvider implements DemoDataProvider {
         verified,
       };
       this.#session = session;
+      this.#clearRecovery();
       return this.#buildAnalysis(session, request.userState);
     } catch (error) {
       if (isAbortError(error)) {
@@ -453,7 +640,7 @@ export class LiveExtractionProvider implements DemoDataProvider {
         (error.code === "JOB_EXPIRED" || error.code === "JOB_NOT_FOUND") &&
         this.#activeRequest === active
       ) {
-        this.#activeRequest = undefined;
+        this.#clearRecovery();
       }
       if (
         error instanceof LiveExtractionClientError &&
@@ -461,7 +648,7 @@ export class LiveExtractionProvider implements DemoDataProvider {
         this.#activeRequest === active
       ) {
         if (isDefinitiveStartRejection(error.code)) {
-          this.#activeRequest = undefined;
+          this.#clearRecovery();
         } else {
           active.requestState = "ambiguous";
         }
@@ -522,11 +709,11 @@ export class LiveExtractionProvider implements DemoDataProvider {
   }
 
   resumeState(): LiveResumeState {
-    if (this.#activeRequest === undefined) return "none";
-    return this.#activeRequest.jobId !== undefined &&
-      this.#activeRequest.statusUrl !== undefined
-      ? "job"
-      : "request";
+    const active = this.#activeRequest;
+    if (active?.jobId !== undefined && active.statusUrl !== undefined) return "job";
+    if (this.#recoveryBlocked) return "blocked";
+    if (active?.requestState === "ambiguous") return "request";
+    return "none";
   }
 
   async replan(sessionId: string, userState: UserState): Promise<DemoAnalysis> {

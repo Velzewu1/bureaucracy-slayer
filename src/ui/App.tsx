@@ -38,12 +38,26 @@ import type {
   DemoScenario,
   DemoScenarioId,
   LiveExtractionPhase,
+  LiveResumeState,
 } from "./types.js";
 import { updateUserFact } from "./viewModel.js";
 
 const fixtureProvider = new FixtureDemoProvider({ latencyMs: 650 });
 const recordedProvider = new RecordedExtractionProvider({ latencyMs: 650 });
 const liveProvider = new LiveExtractionProvider();
+
+type Activity = "analyzing" | "replanning" | null;
+
+export function deriveLiveRecoveryControls(
+  activity: Activity,
+  resumeState: LiveResumeState,
+): Readonly<{ canResume: boolean; canRetryAmbiguous: boolean }> {
+  if (activity !== null) return { canResume: false, canRetryAmbiguous: false };
+  return {
+    canResume: resumeState === "job",
+    canRetryAmbiguous: resumeState === "request",
+  };
+}
 
 type AppProps = Readonly<{
   initialMode?: DemoMode;
@@ -117,7 +131,7 @@ const livePhaseCopy: Readonly<
 
 export function App({ initialMode = "verified_fixture", provider, providers }: AppProps) {
   const [workspace, setWorkspace] = useState(() => createModeWorkspaceState(initialMode));
-  const [activity, setActivity] = useState<"analyzing" | "replanning" | null>(null);
+  const [activity, setActivity] = useState<Activity>(null);
   const [liveProgress, setLiveProgress] = useState<LiveExtractionPhase | null>(null);
   const runIdRef = useRef(0);
   const busyRef = useRef(false);
@@ -139,8 +153,10 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
       ? activeProvider.resumeState?.() ??
         (activeProvider.canResume?.() === true ? "job" : "none")
       : "none";
-  const canResumeLive = liveResumeState === "job";
-  const canRetryAmbiguousLive = liveResumeState === "request";
+  const { canResume: canResumeLive, canRetryAmbiguous: canRetryAmbiguousLive } =
+    deriveLiveRecoveryControls(activity, liveResumeState);
+  const isLiveRecoveryBlocked =
+    workspace.mode === "live_sonnet" && liveResumeState === "blocked";
 
   const model =
     workspace.analysis?.model ??
@@ -363,7 +379,9 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
         }
         analyzeLabel={
           workspace.mode === "live_sonnet"
-            ? canResumeLive
+            ? isLiveRecoveryBlocked
+              ? "Live recovery blocked"
+              : canResumeLive
               ? "Resume live extraction"
               : canRetryAmbiguousLive
                 ? "Retry live extraction"
@@ -373,6 +391,7 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
         reanalyzeLabel={workspace.mode === "live_sonnet" ? "Start new extraction" : "Analyze again"}
         busyLabel={activity === "replanning" ? "Replanning" : workspace.mode === "live_sonnet" ? "Extracting" : "Analyzing"}
         isBusy={isBusy}
+        isAnalyzeDisabled={isLiveRecoveryBlocked}
         hasAnalysis={workspace.analysis !== null}
         onAnalyze={() => void analyze()}
       />
@@ -413,7 +432,9 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
               ? workspace.analysis?.plan.status === "review_required"
                 ? "The live run completed operationally, but semantic or evidence review gates prevent a ready recommendation."
                 : workspace.analysis === null
-                  ? canResumeLive
+                  ? isLiveRecoveryBlocked
+                    ? "Stored Live recovery metadata failed validation. No backend request will be sent. Close this tab to start a new browser session."
+                    : canResumeLive
                     ? "The backend job is retained. Resume polling without starting another paid extraction; stopping locally did not cancel backend work."
                     : canRetryAmbiguousLive
                       ? "Retry the same idempotent start request. The backend may already have accepted it, so the request ID is reused to prevent duplicate paid work."
@@ -495,6 +516,8 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
                 <span>
                   {isBusy
                     ? "Live extraction running now"
+                    : isLiveRecoveryBlocked
+                      ? "Live recovery blocked"
                     : canResumeLive
                       ? "Live polling paused"
                       : canRetryAmbiguousLive
@@ -503,7 +526,9 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
                 </span>
                 <strong>
                   {workspace.analysis?.source.modelName ??
-                    (canResumeLive
+                    (isLiveRecoveryBlocked
+                      ? "Stored metadata rejected"
+                      : canResumeLive
                       ? "Backend job retained"
                       : canRetryAmbiguousLive
                         ? "Idempotent request retained"
@@ -511,7 +536,9 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
                 </strong>
                 <p>
                   {workspace.analysis === null
-                    ? canResumeLive
+                    ? isLiveRecoveryBlocked
+                      ? "The stored value was invalid, tampered with, or too old for a safe same-ID retry. No new extraction can start in this tab."
+                      : canResumeLive
                       ? "Resume the retained job without another POST. The browser has not claimed or requested backend cancellation."
                       : canRetryAmbiguousLive
                         ? "Retry with the same request ID. A repeated POST remains idempotent and must not create duplicate paid work."
@@ -568,9 +595,16 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
                   Start the analysis to inspect safe steps, source citations, and the actions the
                   planner excluded.
                 </p>
-                <button className="button button--primary" type="button" onClick={() => void analyze()}>
+                <button
+                  className="button button--primary"
+                  type="button"
+                  onClick={() => void analyze()}
+                  disabled={isLiveRecoveryBlocked}
+                >
                   {workspace.mode === "live_sonnet"
-                    ? canResumeLive
+                    ? isLiveRecoveryBlocked
+                      ? "Live recovery blocked"
+                      : canResumeLive
                       ? "Resume live extraction"
                       : canRetryAmbiguousLive
                         ? "Retry live extraction"

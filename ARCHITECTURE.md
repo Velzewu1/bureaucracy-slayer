@@ -115,7 +115,7 @@ Claude can propose meaning, but cannot create trusted evidence, mark an action e
 | UI | Minimal Vite + React page | Fastest path to show goal, user facts, evidence, decision, and steps. | Extension side panel and polished chat UI. | User-in-place navigation becomes more important than proving the architecture. |
 | API | Thin Node HTTP server using Fastify | Keeps the Claude key and Playwright in Node, offers small validated routes, and remains familiar. | Serverless functions and cloud hosting. | Deployment becomes a judged requirement. If Fastify setup costs time, use Node's built-in HTTP server without changing domain modules. |
 | Tests | Vitest for pure modules; Playwright Test for collector and end-to-end fixture tests | One fast deterministic suite and one realistic browser suite. | Full cross-browser matrix and hosted CI. | The vertical slice is stable and portability needs evidence. |
-| State | In memory, with optional JSON artifact export for replay | Supports rapid iteration and a demo fallback if the model API is unavailable. | User accounts and durable sessions. | Multi-user or post-demo persistence is required. |
+| State | In memory, with optional JSON artifact export for replay; Live mode stores only versioned request/job recovery identifiers in same-tab `sessionStorage` | Supports rapid iteration and a demo fallback while preserving paid-work identity across a full UI reload without persisting plans, facts, evidence, or source content. | User accounts and durable sessions. | Multi-user or post-demo persistence is required. |
 
 ### Provenance decision
 
