@@ -108,18 +108,24 @@ export function evaluatePolicies(
     }
 
     let status: ActionEvaluation["status"];
-    if (evidence.status === "invalid" || !executableActions.has(action.id) || rejectedActionRules.length > 0 || typeMismatch) {
+    const evidenceIsInvalid = evidence.status === "invalid";
+    const actionIsUnverified = !executableActions.has(action.id);
+    const hasRejectedRules = rejectedActionRules.length > 0;
+    if (evidenceIsInvalid) reasonCodes.push("EVIDENCE_INVALID");
+    if (actionIsUnverified) reasonCodes.push("ACTION_UNVERIFIED");
+    if (hasRejectedRules) reasonCodes.push("EVIDENCE_REJECTED");
+    if (typeMismatch) reasonCodes.push("FACT_TYPE_MISMATCH");
+
+    if (evidenceIsInvalid || actionIsUnverified || typeMismatch) {
       status = "review";
-      if (evidence.status === "invalid") reasonCodes.push("EVIDENCE_INVALID");
-      if (!executableActions.has(action.id)) reasonCodes.push("ACTION_UNVERIFIED");
-      if (rejectedActionRules.length > 0) reasonCodes.push("EVIDENCE_REJECTED");
-      if (typeMismatch) reasonCodes.push("FACT_TYPE_MISMATCH");
     } else if (activeProhibitions > 0 && activePermits > 0) {
       status = "review";
       reasonCodes.push("POLICY_CONFLICT", "PROHIBITED");
     } else if (activeProhibitions > 0) {
       status = "forbidden";
       reasonCodes.push("PROHIBITED");
+    } else if (hasRejectedRules) {
+      status = "review";
     } else if (possibleProhibitions > 0 || unknownRequirements > 0) {
       status = "indeterminate";
       reasonCodes.push("MISSING_FACTS");

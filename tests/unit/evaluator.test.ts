@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { UserStateSchema } from "../../src/contracts/index.js";
-import { evaluatePolicies } from "../../src/engine/index.js";
+import { UserStateSchema, hashCanonical } from "../../src/contracts/index.js";
+import { evaluatePolicies, planActions } from "../../src/engine/index.js";
+import { recordedSonnetBundleInput } from "../../src/ui/generated/recordedSonnetBundle.js";
+import { RecordedExtractionBundleSchema } from "../../src/ui/recordedBundle.js";
 import {
   baseProcedureModelFixture,
   conflictingEvidenceModelFixture,
+  plannerContextFixture,
   scheduledInstantStateFixture,
   scheduledStandardStateFixture,
   semanticReviewModelFixture,
@@ -12,6 +15,8 @@ import {
   wrongQuoteModelFixture,
 } from "../fixtures/p0.js";
 import { validatedArtifacts } from "../helpers.js";
+
+const recordedBundle = RecordedExtractionBundleSchema.parse(recordedSonnetBundleInput);
 
 function decisionFor(modelInput: unknown, stateInput: unknown, actionId: string) {
   const { model, evidence } = validatedArtifacts(modelInput);
@@ -53,6 +58,34 @@ describe("policy evaluation", () => {
     });
   });
 
+  it("keeps a verified active prohibition dominant when the permit evidence is rejected", () => {
+    const decision = decisionFor(wrongQuoteModelFixture, scheduledInstantStateFixture, "proc_cancel01");
+
+    expect(decision).toMatchObject({
+      status: "forbidden",
+      reasonCodes: expect.arrayContaining(["EVIDENCE_REJECTED", "PROHIBITED"]),
+      citationRuleIds: expect.arrayContaining(["rule_instantdeny1"]),
+    });
+  });
+
+  it("keeps a verified active prohibition dominant when the permit is indeterminate", () => {
+    const state = structuredClone(scheduledInstantStateFixture);
+    const facts: Record<string, string | boolean> = { ...state.facts };
+    delete facts["payment.status"];
+
+    const decision = decisionFor(
+      baseProcedureModelFixture,
+      { ...state, facts },
+      "proc_cancel01",
+    );
+
+    expect(decision).toMatchObject({
+      status: "forbidden",
+      reasonCodes: ["PROHIBITED"],
+      missingFacts: expect.arrayContaining(["payment.status"]),
+    });
+  });
+
   it("is invariant to policy rule ordering when permits and prohibitions conflict", () => {
     const permit = baseProcedureModelFixture.rules.find((rule) => rule.id === "rule_cancelpermit1");
     const prohibition = baseProcedureModelFixture.rules.find((rule) => rule.id === "rule_instantdeny1");
@@ -91,6 +124,91 @@ describe("policy evaluation", () => {
     const decision = decisionFor(wrongQuoteModelFixture, scheduledStandardStateFixture, "proc_cancel01");
     expect(decision.status).toBe("review");
     expect(decision.reasonCodes).toContain("EVIDENCE_REJECTED");
+  });
+
+  it("does not treat a rejected prohibition as a verified prohibition", () => {
+    const rejectedProhibitionModel = {
+      ...baseProcedureModelFixture,
+      id: "procedure_badprohibition1",
+      rules: baseProcedureModelFixture.rules.map((rule) =>
+        rule.id === "rule_instantdeny1"
+          ? {
+              ...rule,
+              citations: rule.citations.map((citation) => ({
+                ...citation,
+                excerpt: "Instant transfers are always cancellable.",
+              })),
+            }
+          : rule,
+      ),
+    };
+
+    const decision = decisionFor(rejectedProhibitionModel, scheduledInstantStateFixture, "proc_cancel01");
+
+    expect(decision).toMatchObject({
+      status: "review",
+      reasonCodes: expect.arrayContaining(["EVIDENCE_REJECTED"]),
+    });
+    expect(decision.reasonCodes).not.toContain("PROHIBITED");
+  });
+
+  it("keeps recorded Completed cancellation forbidden despite its rejected permit", () => {
+    const state = UserStateSchema.parse({
+      ...recordedBundle.defaultScenario.userState,
+      revision: 2,
+      facts: {
+        ...recordedBundle.defaultScenario.userState.facts,
+        transfer_status: "completed",
+        processing_started: false,
+      },
+    });
+    const result = evaluatePolicies(recordedBundle.procedureModel, recordedBundle.buildTimeEvidence, state);
+    const decision = result.decisions.find((candidate) => candidate.actionId === "proc_cancel_transfer");
+
+    expect(decision).toMatchObject({
+      status: "forbidden",
+      reasonCodes: expect.arrayContaining(["EVIDENCE_REJECTED", "PROHIBITED"]),
+      citationRuleIds: expect.arrayContaining(["rule_r1_prohibit_cancel_completed"]),
+    });
+  });
+
+  it("keeps recorded Scheduled Standard cancellation under review when its permit is rejected", () => {
+    const result = evaluatePolicies(
+      recordedBundle.procedureModel,
+      recordedBundle.buildTimeEvidence,
+      recordedBundle.defaultScenario.userState,
+    );
+    const decision = result.decisions.find((candidate) => candidate.actionId === "proc_cancel_transfer");
+
+    expect(decision).toMatchObject({
+      status: "review",
+      reasonCodes: expect.arrayContaining(["EVIDENCE_REJECTED"]),
+    });
+    expect(decision?.reasonCodes).not.toContain("PROHIBITED");
+  });
+
+  it("never plans cancellation steps for forbidden or review outcomes", () => {
+    const cancelOnlyModel = {
+      ...wrongQuoteModelFixture,
+      id: "procedure_cancelonly1",
+      goalActionIds: ["proc_cancel01"],
+    };
+    const { model, evidence } = validatedArtifacts(cancelOnlyModel);
+
+    for (const [stateInput, expectedStatus] of [
+      [scheduledInstantStateFixture, "blocked"],
+      [scheduledStandardStateFixture, "review_required"],
+    ] as const) {
+      const state = UserStateSchema.parse(stateInput);
+      const evaluation = evaluatePolicies(model, evidence, state);
+      const plan = planActions(model, evidence, evaluation, state, {
+        ...plannerContextFixture,
+        userStateHash: hashCanonical(state),
+      });
+
+      expect(plan.status).toBe(expectedStatus);
+      expect(plan.steps).toEqual([]);
+    }
   });
 
   it("treats semantic insufficiency as review even when the quotation matches", () => {
