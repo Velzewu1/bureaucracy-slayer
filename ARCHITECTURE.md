@@ -429,6 +429,7 @@ export const EvidenceIssue = z.object({
     "CROSS_ORIGIN_BLOCKED",
     "REFERENCE_INVALID",
     "DEPENDENCY_CYCLE",
+    "SEMANTIC_REVIEW_REQUIRED",
   ]),
   message: z.string(),
   ruleId: Id.optional(),
@@ -485,6 +486,27 @@ Implementation may split these snippets into files, but field meaning and versio
 All externally parsed object schemas must be strict in production (`.strict()` directly or through one documented schema wrapper); unknown fields are errors. The snippets emphasize the contract fields rather than repeating the wrapper on every nested object. `ProcedureAction` also receives a cross-field refinement: `navigate` and `interact` require `websiteActionId`, while `user_task` must omit it.
 
 ## 9. Evidence validation and trust boundaries
+
+### Canonical hashing v1
+
+Collector-generated hashes use SHA-256 and lowercase hexadecimal output. Strings are encoded as UTF-8 explicitly. Canonical structured serialization sorts object keys lexicographically at every level, preserves array order, uses JSON scalar representations, rejects non-finite numbers and unsupported/undefined values, and adds `hashVersion: 1` plus a domain `kind` to new structured preimages. Capture timestamps and each object's own hash field are excluded so an unchanged recapture retains the same content hash.
+
+The reusable implementation is `src/shared/hashing.ts`. Hash fields do not all share one preimage:
+
+| Contract field | Canonical preimage and computation |
+|---|---|
+| `EvidenceBlock.textHash` | `SHA-256(UTF8(normalizeEvidenceText(text)))`, where normalization is NFKC, all whitespace runs become one ASCII space, then leading/trailing whitespace is removed. This is the existing `hashText` recipe. |
+| `WebsiteAction.fingerprint` | Canonical serialization of `{ hashVersion: 1, kind: "WebsiteAction.fingerprint", pageId, actionKind, label, targetUrl|null, method|null, reversible, locators }`, then SHA-256 over UTF-8. `visible` and `enabled` are deliberately excluded because the validator checks current availability separately. Array/locator order is significant. |
+| `PageSnapshot.contentHash` | Canonical serialization of `{ hashVersion: 1, kind: "PageSnapshot.contentHash", id, url, canonicalUrl, title, blocks, actions }`, then SHA-256 over UTF-8. Each block contributes `{ id, text, textHash }`; each action contributes every `WebsiteAction` field with missing `targetUrl`/`method` represented as `null`. Block/action order is significant. `capturedAt` and the page's own `contentHash` are excluded. |
+| `SiteSnapshot.contentHash` | Canonical serialization of `{ hashVersion: 1, kind: "SiteSnapshot.contentHash", schemaVersion, id, siteId, rootUrl, pages }`, where each page contributes `{ id, contentHash: hashPageSnapshotContent(page) }`, then SHA-256 over UTF-8. Page order is significant. Supplied page hashes, `capturedAt`, and the site's own `contentHash` are not trusted as preimage inputs. |
+| `ProcedureModel.sourceSnapshotHash` | Exact copy of the source `SiteSnapshot.contentHash`; no new hash operation. |
+| `EvidenceResult.snapshotHash` | Exact copy of the validated snapshot's `contentHash`; no new hash operation. |
+| `SafeActionPlan.snapshotHash` | Exact binding propagated from `EvidenceResult.snapshotHash`; no new hash operation. |
+| `SafeActionPlan.userStateHash` | SHA-256 over UTF-8 canonical serialization of the complete parsed `UserState` object `{ schemaVersion, revision, facts }`. This preserves the existing `hashCanonical(userState)` recipe; fact-object key order is insignificant. |
+
+`HashSchema` remains `string().min(8)` for compatibility. Existing P0 fixtures use opaque page/site values such as `pagepolicyhash0001` and `snapshotcontenthash0001`; only block hashes and CLI user-state hashes were computed digests before this decision. The validator currently recomputes `EvidenceBlock.textHash`, compares `ProcedureModel.sourceSnapshotHash` to `SiteSnapshot.contentHash`, and propagates that binding. It does not recompute page/site hashes or action fingerprints. This behavior is intentionally unchanged during stabilization so authorization results and fixtures do not silently change.
+
+Compatible migration: all new collector output must use the v1 functions; extracted models copy the resulting site hash. Existing hand-authored fixtures remain valid. Enabling validator enforcement for page/site/fingerprint recomputation is a separate contract migration that must first convert fixtures, define failure codes, and test authorization changes.
 
 ### Normalization
 
@@ -653,7 +675,8 @@ The intended single-package structure is:
   tsconfig.json               strict shared TypeScript settings
   vite.config.ts
   src/
-    contracts/                Zod schemas, inferred types, canonical hashing
+    contracts/                Zod schemas/types and legacy hash compatibility
+    shared/                   canonical hash recipes reused by collector/evidence
     collector/                Playwright capture, normalization, stable IDs
     extraction/               Claude prompt, structured call, output parsing
     evidence/                 citation/action/reference validation
@@ -666,15 +689,16 @@ The intended single-package structure is:
     ui/                       React components; no policy decisions
   mock-portal/                controlled website fixture and its visible policies
   tests/
+    collector/                all collector hashing, capture, and local-site tests
     unit/                     contracts, conditions, evaluator, planner, evidence
     fixtures/                 snapshots/models/user states; no engine knowledge
     e2e/                      collector and vertical-slice Playwright tests
   artifacts/                  ignored generated demo captures; sanitized only
 ```
 
-Dependency direction is inward: `ui/server -> orchestration -> collector|extraction|evidence|engine -> contracts`. `engine` may import only contracts and pure utilities. Collector and extraction must not import engine rules. The mock portal must never be imported by production modules.
+Dependency direction is inward: `ui/server -> orchestration -> collector|extraction|evidence|engine`; `collector|evidence -> shared -> contracts`, while `engine` imports only contracts and its own pure utilities. Collector and extraction must not import engine rules. The mock portal must never be imported by production modules.
 
-The canonical module roots are `src/contracts/`, `src/collector/`, `src/extraction/`, `src/evidence/`, `src/engine/`, `src/orchestration/`, `src/server/`, and `src/ui/`. Canonical test roots are `tests/unit/`, `tests/fixtures/`, and `tests/e2e/`; the controlled site root is `mock-portal/`. These exact paths are also used by `AGENTS.md`.
+The canonical module roots are `src/contracts/`, `src/shared/`, `src/collector/`, `src/extraction/`, `src/evidence/`, `src/engine/`, `src/orchestration/`, `src/server/`, and `src/ui/`. Canonical test roots are `tests/unit/`, `tests/collector/`, `tests/fixtures/`, and `tests/e2e/`; the controlled site root is `mock-portal/`. All new collector-specific tests belong in `tests/collector/`, including pure hashing/normalization tests and Playwright tests against local deterministic pages. `tests/e2e/` is reserved for later cross-module vertical-slice tests. Do not split collector tests across `tests/unit/` and `tests/integration/`.
 
 ## 15. Concrete test scenarios and expected outcomes
 

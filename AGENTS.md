@@ -18,7 +18,8 @@ Do not trade a P0 acceptance criterion for generality, infrastructure, or visual
 
 Use the structure defined in `ARCHITECTURE.md`:
 
-- `src/contracts/`: Zod schemas, inferred types, canonical serialization/hashing. Owns shared data shapes.
+- `src/contracts/`: Zod schemas, inferred types, and legacy-compatible generic normalization/hashing. Owns shared data shapes.
+- `src/shared/`: pure, versioned hash recipes shared by collector and evidence validation; owns no policy meaning.
 - `src/collector/`: Playwright observation, text normalization, stable snapshot IDs. Owns no policy meaning.
 - `src/extraction/`: Claude prompt and structured-output parsing. This is the only probabilistic interpretation boundary.
 - `src/evidence/`: citation, action, reference, allowlist, graph, and hash validation.
@@ -32,7 +33,9 @@ Use the structure defined in `ARCHITECTURE.md`:
 Allowed dependency direction:
 
 ```text
-ui/server -> orchestration -> collector | extraction | evidence | engine -> contracts
+ui/server -> orchestration -> collector | extraction | evidence | engine
+collector | evidence -> shared -> contracts
+engine -> contracts
 ```
 
 Avoid circular imports. Modules communicate through contracts, not deep imports into another module's internals.
@@ -108,7 +111,8 @@ Only deterministic code may validate evidence, evaluate three-valued conditions,
 
 Every behavioral change includes the smallest relevant automated test. Tests must be offline and deterministic by default.
 
-- `tests/unit/`: schema acceptance/rejection, normalization, hash stability, three-valued truth tables, prohibition dominance, missing facts, conflicts, stale bindings, graph validation, and deterministic route ranking.
+- `tests/unit/`: schema acceptance/rejection, three-valued truth tables, prohibition dominance, missing facts, conflicts, stale bindings, graph validation, and deterministic route ranking.
+- `tests/collector/`: the canonical location for all collector-specific hashing, normalization, capture, traversal, and local-site integration tests. Do not place new collector tests under `tests/unit/` or `tests/integration/`.
 - `tests/fixtures/`: sanitized immutable inputs; explicitly label hand-authored versus recorded extraction fixtures.
 - `tests/e2e/`: Playwright verifies that collected pages/actions really exist and exercises the vertical slice against the local mock portal.
 - Never require a live Claude call for the default test command. Test the adapter with a fake transport and keep any live evaluation behind an explicit command/environment flag.
@@ -120,19 +124,16 @@ Required experiment coverage is listed in `ARCHITECTURE.md`: policy exception, n
 
 ## Commands
 
-The repository currently contains documentation only. These commands are proposed targets and must be made real when the project is scaffolded; keep their names stable afterward:
+Phase 1 implements the root contracts, evidence validator, evaluator, planner, tests, and fixture CLI. These commands are available now:
 
 ```powershell
 npm install                 # install pinned dependencies
-npm run dev                 # local API, Vite UI, and mock portal
 npm run typecheck           # strict TypeScript check
 npm test                    # offline Vitest unit/integration suite
-npm run test:e2e            # Playwright tests against local fixtures
-npm run test:live-extract   # optional, explicit Claude-backed evaluation
-npm run lint                # configured static checks
+npm run demo                # run the valid fixture-driven CLI scenario
 ```
 
-Do not claim a proposed command works until it exists and has been run successfully. Use npm unless a documented architecture decision changes the package manager; do not add monorepo tooling.
+`npm run dev`, `npm run test:e2e`, `npm run test:live-extract`, and `npm run lint` remain proposed for later phases and are not yet package scripts. Do not claim a proposed command works until it exists and has been run successfully. Use npm unless a documented architecture decision changes the package manager; do not add monorepo tooling.
 
 ## Scope and dependency discipline
 
@@ -160,7 +161,7 @@ The engine may hardcode only documented universal semantics such as three-valued
 - Keep Playwright `Page`, HTTP request/response objects, React state, environment variables, and Anthropic SDK types at adapters.
 - `src/engine/` tests must run without a DOM, network, filesystem, environment secrets, or model.
 - `src/evidence/` tests use in-memory snapshots and models.
-- Collector tests run only against local deterministic pages.
+- Collector tests live under `tests/collector/` and run only against local deterministic pages.
 - UI consumes `SafeActionPlan`; it must not reproduce condition or conflict logic.
 
 ## Decisions, limitations, and refactoring
@@ -194,4 +195,3 @@ Before declaring work complete, verify:
 6. no secrets or sensitive artifacts were introduced;
 7. architecture/contracts/docs changed when semantics changed; and
 8. the handoff states what was verified and what remains.
-
