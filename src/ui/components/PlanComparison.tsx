@@ -67,8 +67,14 @@ export function PlanComparison({ original, current }: PlanComparisonProps) {
       <div className="route-delta">
         <div>
           <span>Removed</span>
-          {difference.removedActions.length > 0 ? (
-            difference.removedActions.map((action) => <strong key={action}>− {action}</strong>)
+          {difference.removedActionDetails.length > 0 ? (
+            difference.removedActionDetails.map((action) => (
+              <div className="removed-action-detail" key={action.id}>
+                <strong>&minus; {action.label}</strong>
+                {action.status === undefined ? null : <small>{action.status}</small>}
+                {action.reasons.map((reason) => <p key={reason}>{reason}</p>)}
+              </div>
+            ))
           ) : (
             <em>None</em>
           )}

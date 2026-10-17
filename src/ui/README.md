@@ -79,3 +79,27 @@ npm.cmd run dev:ui
 The **Recorded Sonnet extraction** selector is intentionally locked to its
 recorded goal and local snapshot URL. Changing user facts performs only bounded,
 deterministic replanning and cannot clear semantic-review gates.
+
+## Guided personalization
+
+Guided and All facts are presentation views over the same `ModeWorkspaceState.userState`.
+All facts preserves the complete canonical form. Guided becomes available only after an
+analysis supplies verified artifacts, asks one unresolved model-declared fact at a time,
+and immediately calls the existing `DemoDataProvider.replan` boundary after an answer.
+Switching views does not copy, reset, or reinterpret facts.
+
+The guided view reuses the existing deterministic decision path:
+
+- `analyzeDecisionIntelligence` supplies the trace, counterfactuals, and question list.
+- `rankAdaptiveQuestions` owns question priority and ranks materially different bounded
+  outcomes; the UI does not implement a competing ranking heuristic.
+- `updateUserFact` adds or removes the canonical scalar value without coercing an unknown.
+- `DemoDataProvider.replan` invokes the existing local evaluator/planner implementation;
+  it does not collect pages or run extraction.
+- `planDifference`, `SafeRoutePanel`, and `DecisionIntelligencePanel` retain route changes,
+  exact citations, and the full technical trace.
+
+If the ranked list cannot represent an unresolved canonical fact, the UI uses the first
+unanswered `plan.missingFacts` entry in `ProcedureModel.factDefinitions` order. This is a
+stable fallback, not an optimized question-selection claim. Facts absent from the plan's
+missing-fact set are never surfaced as necessary by that fallback.

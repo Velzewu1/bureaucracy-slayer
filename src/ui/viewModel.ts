@@ -423,6 +423,19 @@ export function planDifference(original: DemoAnalysis, current: DemoAnalysis) {
       before: original.userState.facts[key],
       after: current.userState.facts[key],
     }));
+  const removedActionDetails = originalActionIds
+    .filter((id) => !currentActionIds.includes(id))
+    .map((id) => {
+      const decision = current.evaluation.decisions.find(
+        (candidate) => candidate.actionId === id,
+      );
+      return {
+        id,
+        label: actionLabel(original, id),
+        status: decision?.status,
+        reasons: decision?.reasonCodes.map(readableReason) ?? [],
+      };
+    });
   return {
     changed:
       original.plan.id !== current.plan.id ||
@@ -430,9 +443,8 @@ export function planDifference(original: DemoAnalysis, current: DemoAnalysis) {
       originalActionIds.join("|") !== currentActionIds.join("|"),
     originalStatus: planStatusPresentation(original.plan).label,
     currentStatus: planStatusPresentation(current.plan).label,
-    removedActions: originalActionIds
-      .filter((id) => !currentActionIds.includes(id))
-      .map((id) => actionLabel(original, id)),
+    removedActions: removedActionDetails.map((action) => action.label),
+    removedActionDetails,
     addedActions: currentActionIds
       .filter((id) => !originalActionIds.includes(id))
       .map((id) => actionLabel(current, id)),

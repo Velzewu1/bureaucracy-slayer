@@ -15,6 +15,7 @@ import { AnalysisSetup } from "./components/AnalysisSetup.js";
 import { AppHeader } from "./components/AppHeader.js";
 import { DecisionIntelligencePanel } from "./components/DecisionIntelligencePanel.js";
 import { ExcludedActionsPanel } from "./components/ExcludedActionsPanel.js";
+import { GuidedPersonalization } from "./components/GuidedPersonalization.js";
 import { PlanComparison } from "./components/PlanComparison.js";
 import { ModeSelector } from "./components/ModeSelector.js";
 import { LiveProgressPanel } from "./components/LiveProgressPanel.js";
@@ -23,12 +24,14 @@ import {
   type PersonalizationPlaceholderState,
 } from "./components/PersonalizationPlaceholder.js";
 import { PolicyEvidencePanel } from "./components/PolicyEvidencePanel.js";
+import { PersonalizationViewToggle } from "./components/PersonalizationViewToggle.js";
 import { SafeRoutePanel } from "./components/SafeRoutePanel.js";
 import { UserStatePanel } from "./components/UserStatePanel.js";
 import {
   demoProcedureModel,
   demoScenarios,
 } from "./fixtures/demoArtifacts.js";
+import type { PersonalizationView } from "./guidedPersonalization.js";
 import {
   applyAnalysisResult,
   beginModeAnalysis,
@@ -117,6 +120,8 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
   const [workspace, setWorkspace] = useState(() => createModeWorkspaceState(initialMode));
   const [activity, setActivity] = useState<Activity>(null);
   const [liveProgress, setLiveProgress] = useState<LiveExtractionPhase | null>(null);
+  const [personalizationView, setPersonalizationView] =
+    useState<PersonalizationView>("guided");
   const runIdRef = useRef(0);
   const busyRef = useRef(false);
   const navigationInterruptedRef = useRef(false);
@@ -204,6 +209,7 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
       activeProvider.stop?.("mode_changed");
     }
     setWorkspace(createModeWorkspaceState(mode));
+    setPersonalizationView("guided");
     setActivity(null);
     setLiveProgress(null);
   }
@@ -220,6 +226,7 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
       error: null,
       errorKind: null,
     }));
+    setPersonalizationView("guided");
   }
 
   function changeGoal(nextGoal: string): void {
@@ -292,7 +299,7 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
     }
   }
 
-  async function replan(): Promise<void> {
+  async function replan(userState = workspace.userState): Promise<void> {
     if (workspace.analysis === null || busyRef.current) return;
     busyRef.current = true;
     const runId = runIdRef.current + 1;
@@ -304,7 +311,7 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
     const nextUserState: UserState = {
       schemaVersion: 1,
       revision: workspace.analysis.plan.userStateRevision + 1,
-      facts: { ...workspace.userState.facts },
+      facts: { ...userState.facts },
     };
     try {
       const result = await startedProvider.replan(workspace.analysis.sessionId, nextUserState);
@@ -323,6 +330,17 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
         setActivity(null);
       }
     }
+  }
+
+  function answerGuidedFact(key: string, value: JsonScalar | undefined): void {
+    if (workspace.analysis === null || busyRef.current) return;
+    const nextUserState = updateUserFact(workspace.userState, key, value);
+    setWorkspace((current) => ({
+      ...current,
+      userState: nextUserState,
+      isDirty: true,
+    }));
+    void replan(nextUserState);
   }
 
   function stopLivePolling(): void {
@@ -470,15 +488,32 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
         <div className="workspace-grid">
           <aside>
             {workspace.mode !== "live_sonnet" || workspace.analysis !== null ? (
-              <UserStatePanel
-                model={model}
-                userState={workspace.userState}
-                missingFacts={missingFacts}
-                isDirty={workspace.isDirty}
-                isBusy={isBusy}
-                onFactChange={changeFact}
-                onReplan={() => void replan()}
-              />
+              <>
+                <PersonalizationViewToggle
+                  view={workspace.analysis === null ? "all_facts" : personalizationView}
+                  guidedAvailable={workspace.analysis !== null}
+                  disabled={isBusy}
+                  onChange={setPersonalizationView}
+                />
+                {workspace.analysis !== null && personalizationView === "guided" ? (
+                  <GuidedPersonalization
+                    analysis={workspace.analysis}
+                    userState={workspace.userState}
+                    isBusy={isBusy}
+                    onAnswer={answerGuidedFact}
+                  />
+                ) : (
+                  <UserStatePanel
+                    model={model}
+                    userState={workspace.userState}
+                    missingFacts={missingFacts}
+                    isDirty={workspace.isDirty}
+                    isBusy={isBusy}
+                    onFactChange={changeFact}
+                    onReplan={() => void replan()}
+                  />
+                )}
+              </>
             ) : (
               <PersonalizationPlaceholder
                 state={livePersonalizationState(
