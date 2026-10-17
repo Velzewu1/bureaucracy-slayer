@@ -7,6 +7,10 @@ import {
   type SafeActionPlan,
   type UserState,
 } from "../contracts/index.js";
+import {
+  buildDecisionTrace,
+  type RuleDecisionTrace,
+} from "../decision/index.js";
 import type { DemoAnalysis } from "./types.js";
 
 export type Tone = "positive" | "warning" | "danger" | "neutral" | "info";
@@ -39,6 +43,143 @@ const reasonLabels: Readonly<Record<string, string>> = {
 
 export function readableReason(code: string): string {
   return reasonLabels[code] ?? code.replaceAll("_", " ").toLocaleLowerCase();
+}
+
+export type RuleConditionState = "matched" | "not_matched" | "unresolved";
+export type RuleEvidenceState = "verified" | "rejected" | "unknown";
+
+const conditionLabels: Readonly<Record<RuleConditionState, string>> = {
+  matched: "Condition matched",
+  not_matched: "Condition not matched",
+  unresolved: "Condition unresolved",
+};
+
+const evidenceStateLabels: Readonly<Record<RuleEvidenceState, string>> = {
+  verified: "Evidence verified",
+  rejected: "Evidence rejected",
+  unknown: "Evidence status unknown",
+};
+
+function conditionState(
+  applicabilityState: RuleDecisionTrace["applicabilityState"],
+): RuleConditionState {
+  switch (applicabilityState) {
+    case "active":
+      return "matched";
+    case "inactive":
+      return "not_matched";
+    case "potential":
+      return "unresolved";
+  }
+}
+
+function ruleEvidenceState(
+  ruleId: string,
+  analysis: DemoAnalysis,
+): RuleEvidenceState {
+  if (analysis.evidence.rejectedRuleIds.includes(ruleId)) return "rejected";
+  if (analysis.evidence.validRuleIds.includes(ruleId)) return "verified";
+  return "unknown";
+}
+
+function uniqueMessages(messages: readonly (string | undefined)[]): string[] {
+  return [
+    ...new Set(
+      messages.filter((message): message is string => message !== undefined),
+    ),
+  ];
+}
+
+export function actionReadinessPresentation(
+  status: ActionEvaluation["status"],
+): StatusPresentation {
+  switch (status) {
+    case "allowed":
+      return {
+        label: "Action ready",
+        tone: "positive",
+        summary: "The current action passed the authoritative deterministic decision.",
+      };
+    case "forbidden":
+      return {
+        label: "Action prohibited",
+        tone: "danger",
+        summary: "The current action is prohibited by the authoritative decision.",
+      };
+    case "review":
+      return {
+        label: "Human review required",
+        tone: "warning",
+        summary: "The current action cannot proceed until the review gate is resolved.",
+      };
+    case "indeterminate":
+      return {
+        label: "More information required",
+        tone: "warning",
+        summary: "The current action remains unresolved because required facts are unknown.",
+      };
+  }
+}
+
+export function policyRulePresentations(analysis: DemoAnalysis) {
+  const tracesByRuleId = new Map(
+    [...new Set(analysis.model.rules.map((rule) => rule.actionId))]
+      .flatMap((actionId) =>
+        buildDecisionTrace(
+          {
+            model: analysis.model,
+            evidence: analysis.evidence,
+            evaluation: analysis.evaluation,
+            plan: analysis.plan,
+            userState: analysis.userState,
+          },
+          actionId,
+        ).rules,
+      )
+      .map((trace) => [trace.ruleId, trace] as const),
+  );
+
+  return analysis.model.rules.map((rule) => {
+    const trace = tracesByRuleId.get(rule.id);
+    if (trace === undefined) {
+      throw new Error(`No decision trace exists for policy rule ${rule.id}`);
+    }
+    const evidenceIssues = analysis.evidence.issues.filter(
+      (issue) => issue.ruleId === rule.id,
+    );
+    const auditFindings = analysis.semanticAuditFindings.filter(
+      (finding) => finding.ruleId === rule.id,
+    );
+    const evidenceState = ruleEvidenceState(rule.id, analysis);
+    const applicability = conditionState(trace.applicabilityState);
+    const semanticReviewRequired =
+      rule.needsReview ||
+      evidenceIssues.some((issue) => issue.code === "SEMANTIC_REVIEW_REQUIRED") ||
+      auditFindings.length > 0;
+
+    return {
+      ruleId: rule.id,
+      actionId: rule.actionId,
+      effect: rule.effect,
+      applicability,
+      conditionLabel: conditionLabels[applicability],
+      evidenceState,
+      evidenceLabel: evidenceStateLabels[evidenceState],
+      semanticReviewRequired,
+      rejectionReasons: uniqueMessages([
+        ...(rule.needsReview ? [rule.reviewReason] : []),
+        ...evidenceIssues.map((issue) => issue.message),
+        ...auditFindings.map((finding) => finding.message),
+      ]),
+      issueCodes: [
+        ...new Set([
+          ...evidenceIssues.map((issue) => issue.code),
+          ...auditFindings.map((finding) => finding.code),
+        ]),
+      ],
+      trace,
+    };
+  });
 }
 
 export function planStatusPresentation(plan: SafeActionPlan): StatusPresentation {
@@ -136,8 +277,15 @@ function evidenceStatus(
 }
 
 export function evidenceCards(analysis: DemoAnalysis) {
+  const rulePresentations = new Map(
+    policyRulePresentations(analysis).map((rule) => [rule.ruleId, rule] as const),
+  );
   return analysis.model.rules.flatMap((rule) =>
     rule.citations.map((citation) => {
+      const presentation = rulePresentations.get(rule.id);
+      if (presentation === undefined) {
+        throw new Error(`No UI presentation exists for policy rule ${rule.id}`);
+      }
       const evidenceIssues = analysis.evidence.issues
         .filter((issue) => issue.ruleId === rule.id)
         .filter(
@@ -173,6 +321,11 @@ export function evidenceCards(analysis: DemoAnalysis) {
         ruleId: rule.id,
         effect: rule.effect,
         status,
+        conditionState: presentation.applicability,
+        conditionLabel: presentation.conditionLabel,
+        evidenceState: presentation.evidenceState,
+        evidenceLabel: presentation.evidenceLabel,
+        semanticReviewRequired: presentation.semanticReviewRequired,
         condition: describeCondition(rule.appliesWhen),
         excerpt: citation.excerpt,
         pageUrl: citation.pageUrl,

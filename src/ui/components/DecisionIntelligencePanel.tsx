@@ -1,6 +1,10 @@
 import type { JsonScalar } from "../../contracts/index.js";
 import type { DemoAnalysis } from "../types.js";
-import { readableReason } from "../viewModel.js";
+import {
+  actionReadinessPresentation,
+  policyRulePresentations,
+  readableReason,
+} from "../viewModel.js";
 
 type DecisionIntelligencePanelProps = Readonly<{
   analysis: DemoAnalysis;
@@ -18,9 +22,11 @@ export function DecisionIntelligencePanel({
 }: DecisionIntelligencePanelProps) {
   const intelligence = analysis.decisionIntelligence;
   const trace = intelligence.trace;
-  const relevantRules = trace.rules.filter(
-    (rule) => rule.applicabilityState !== "inactive",
+  const actionState = actionReadinessPresentation(trace.decision.status);
+  const rules = policyRulePresentations(analysis).filter(
+    (rule) => rule.actionId === trace.actionId,
   );
+  const hasSemanticReview = rules.some((rule) => rule.semanticReviewRequired);
   const materialCounterfactuals = intelligence.counterfactuals
     .filter((counterfactual) => counterfactual.changed)
     .slice(0, 4);
@@ -38,8 +44,12 @@ export function DecisionIntelligencePanel({
             <h2 id="intelligence-heading">Why this decision?</h2>
           </div>
         </div>
-        <span className={`decision-state decision-state--${trace.decision.status}`}>
-          {trace.decision.status}
+        <span
+          className={`decision-state decision-state--${trace.decision.status}`}
+          aria-label="Authoritative action state"
+          data-testid="authoritative-action-state"
+        >
+          {actionState.label}
         </span>
       </div>
 
@@ -59,9 +69,9 @@ export function DecisionIntelligencePanel({
         </p>
       </div>
 
-      {analysis.evidence.issues.some((issue) => issue.code === "SEMANTIC_REVIEW_REQUIRED") ? (
+      {hasSemanticReview ? (
         <div className="review-boundary" data-testid="semantic-review-boundary">
-          <strong>Semantic review remains a hard gate.</strong>
+          <strong>Semantic review required.</strong>
           <p>
             Fact changes and bounded what-if checks cannot make a rejected permission usable.
             The evaluator and planner continue to withhold the affected action.
@@ -86,20 +96,33 @@ export function DecisionIntelligencePanel({
       )}
 
       <div className="trace-rule-list">
-        {relevantRules.map((rule) => (
-          <article className="trace-rule" key={rule.ruleId}>
-            <div>
+        {rules.map((rule) => (
+          <article
+            className={`trace-rule trace-rule--condition-${rule.applicability} trace-rule--evidence-${rule.evidenceState}`}
+            key={rule.ruleId}
+          >
+            <div
+              className="rule-state-line"
+              aria-label={`${rule.effect.toLocaleUpperCase()} · ${rule.conditionLabel} · ${rule.evidenceLabel}`}
+            >
               <span className={`rule-effect rule-effect--${rule.effect}`}>
                 {rule.effect.replace("_", " ")}
               </span>
-              <strong>{rule.applicabilityState}</strong>
+              <span aria-hidden="true">·</span>
+              <strong className={`condition-state condition-state--${rule.applicability}`}>
+                {rule.conditionLabel}
+              </strong>
+              <span aria-hidden="true">·</span>
+              <strong className={`rule-evidence-state rule-evidence-state--${rule.evidenceState}`}>
+                {rule.evidenceLabel}
+              </strong>
               <code>{rule.ruleId}</code>
             </div>
             <div className="trace-facts">
-              {rule.facts.length === 0 ? (
+              {rule.trace.facts.length === 0 ? (
                 <span>Always applies</span>
               ) : (
-                rule.facts.map((fact, index) => (
+                rule.trace.facts.map((fact, index) => (
                   <span key={`${rule.ruleId}-${fact.key}-${index}`}>
                     <code>{fact.key}</code> ={" "}
                     <strong>{fact.known ? displayValue(fact.actual) : "unknown"}</strong>
@@ -109,14 +132,24 @@ export function DecisionIntelligencePanel({
                 ))
               )}
             </div>
-            {rule.requirement === undefined ? null : (
+            {rule.trace.requirement === undefined ? null : (
               <p className="requirement-result">
-                Required condition: <strong>{rule.requirement.value}</strong>
+                Required condition: <strong>{rule.trace.requirement.value}</strong>
               </p>
             )}
+            {rule.semanticReviewRequired ? (
+              <p className="semantic-review-label">Semantic review required</p>
+            ) : null}
+            {rule.rejectionReasons.length === 0 ? null : (
+              <ul className="rule-rejection-reasons">
+                {rule.rejectionReasons.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            )}
             <details>
-              <summary>Exact evidence ({rule.citations.length})</summary>
-              {rule.citations.map((citation) => (
+              <summary>Exact evidence ({rule.trace.citations.length})</summary>
+              {rule.trace.citations.map((citation) => (
                 <blockquote key={`${rule.ruleId}-${citation.blockId}`}>
                   “{citation.excerpt}”
                   <footer>
@@ -158,6 +191,10 @@ export function DecisionIntelligencePanel({
                     Still unresolved: {counterfactual.unresolvedFacts.join(", ")}
                   </small>
                 )}
+                <small className="counterfactual-evidence-note">
+                  Evidence admissibility is unchanged
+                  {hasSemanticReview ? "; semantic review is still required." : "."}
+                </small>
               </article>
             ))}
           </div>
