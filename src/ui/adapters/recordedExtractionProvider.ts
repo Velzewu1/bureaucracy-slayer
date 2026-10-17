@@ -230,6 +230,7 @@ export class RecordedExtractionProvider implements DemoDataProvider {
       userState,
       semanticAuditFindings: session.semanticAuditFindings,
       source: {
+        kind: "recorded_replay",
         label: "Recorded Sonnet extraction",
         extractionPreviouslyCompleted: true,
         modelName: this.#bundle.provenance.modelName,

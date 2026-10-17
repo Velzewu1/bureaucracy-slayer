@@ -1,53 +1,47 @@
-# HackHarvard offline demo runbook
+# HackHarvard unified demo runbook
 
-This is the safe, repeatable P0 demo path. It makes **zero Anthropic API calls**.
-Use only Verified Fixture, Recorded Sonnet, and the deterministic Live mock. Never run
-`npm.cmd run dev:server` or `npm.cmd run test:live-extract` during an offline rehearsal.
+The product has one visible workflow: one fixed goal, one controlled website, one
+**Analyze Website** action, verified personalization, and one evidence-linked result.
+Provider selection is an operator startup policy, never a user-facing mode switch.
 
-## Requirements
+## Safety rules
 
-- Windows PowerShell and Chrome.
-- Node `^20.19.0` or `>=22.12.0`.
-- The `master` worktree at `aae1b88` or a verified descendant.
-- Root and `mock-portal` dependencies installed from their lockfiles.
-- No API key or `.env` file is required for this offline demo.
+- Offline rehearsals make **zero Anthropic API calls**.
+- Never run `npm.cmd run dev:server` or `npm.cmd run test:live-extract` during an
+  offline rehearsal.
+- Never press **Analyze Website** in an offline browser until the mock-only probe
+  succeeds through that exact UI origin.
+- The app rejects a mock response in `live` policy and rejects an unmarked response
+  in `offline_mock` policy.
+- Fixture and recorded replay are explicitly labeled; neither is presented as fresh.
 
-From the repository root:
+## Requirements and preflight
+
+From `C:\Users\Ansar\OneDrive\Documents\bureaucracy_slayer`:
 
 ```powershell
 git branch --show-current
-git merge-base --is-ancestor aae1b88 HEAD; if ($LASTEXITCODE -ne 0) { throw 'Wrong baseline' }
+git merge-base --is-ancestor 2f41aa0 HEAD; if ($LASTEXITCODE -ne 0) { throw 'Wrong baseline' }
 git status --short
 node --version
 npm.cmd ci --prefer-offline --no-audit --no-fund
 npm.cmd --prefix mock-portal ci --prefer-offline --no-audit --no-fund
-```
-
-`npm ci` is also the recovery for OneDrive placeholder files that exist but cannot be
-resolved by Vite. It must not change either lockfile.
-
-## Port preflight
-
-Never infer process identity from a port number. Inspect listeners before starting:
-
-```powershell
 netstat -ano | Select-String ':5173|:5180|:5190'
 ```
 
-For every reported PID, inspect it before using or stopping it:
+Inspect any reported PID before using or stopping it:
 
 ```powershell
 Get-Process -Id <PID> | Format-List Id,ProcessName,Path,StartTime
 ```
 
-Expected defaults are UI `5173`, portal `5180`, and deterministic mock API `5190`.
-If any port is occupied and its identity is uncertain, do not stop it. Use the isolated
-setup below. A page returning HTTP 200 is not enough to prove it is the current UI or
-the mock API.
+Do not stop an unknown process. Use isolated ports instead.
 
-## Standard three-process startup
+## Normal genuine-live startup
 
-Use three PowerShell terminals at the repository root. Start them in this order.
+This is the normal product policy. It can incur Anthropic charges only after the user
+presses **Analyze Website**, so use it only with explicit authorization and valid local
+configuration.
 
 Terminal 1 — fictional portal:
 
@@ -55,26 +49,60 @@ Terminal 1 — fictional portal:
 npm.cmd run portal:dev
 ```
 
-Terminal 2 — deterministic API mock (not the real server):
+Terminal 2 — real server:
 
 ```powershell
-npm.cmd run dev:mock-api
+$env:BUREAUCRACY_SLAYER_EXECUTION_POLICY = 'live'
+npm.cmd run dev:server
 ```
 
 Terminal 3 — UI:
 
 ```powershell
+$env:BUREAUCRACY_SLAYER_EXECUTION_POLICY = 'live'
 npm.cmd run dev:ui
 ```
 
-Before opening Live mode, prove the UI proxy reaches the mock-only probe:
+The header must say **Live website analysis** before analysis. Genuine-live execution
+is outside the offline judging procedure below.
+
+## Explicit offline mock demo startup
+
+Use three terminals. The execution-policy flag is mandatory: it makes the browser
+accept only responses carrying the deterministic mock marker.
+
+Terminal 1 — fictional portal:
 
 ```powershell
-$probe = Invoke-RestMethod 'http://127.0.0.1:5173/api/live-extraction/offline-mock'
-if ($probe.offlineMock -ne $true) { throw 'UI is not targeting the deterministic mock API' }
+npm.cmd run portal:dev
 ```
 
-Also confirm the portal is the fictional Northstar site:
+Terminal 2 — deterministic API mock:
+
+```powershell
+$env:BUREAUCRACY_SLAYER_MOCK_API_PORT = '5191'
+npm.cmd run dev:mock-api
+```
+
+Terminal 3 — unified UI:
+
+```powershell
+$env:BUREAUCRACY_SLAYER_EXECUTION_POLICY = 'offline_mock'
+$env:BUREAUCRACY_SLAYER_LIVE_API_ORIGIN = 'http://127.0.0.1:5191'
+npm.cmd run dev:ui -- --port 5177
+```
+
+Prove the exact proxy destination before opening Chrome:
+
+```powershell
+$probe = Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:5177/api/live-extraction/offline-mock'
+if ($probe.StatusCode -ne 200) { throw 'Offline mock probe failed' }
+if ($probe.Headers['x-bureaucracy-slayer-offline-mock'] -ne '1') { throw 'Mock marker missing' }
+$body = $probe.Content | ConvertFrom-Json
+if ($body.offlineMock -ne $true) { throw 'UI proxy is not targeting the offline mock' }
+```
+
+Confirm the controlled portal separately:
 
 ```powershell
 $portal = Invoke-WebRequest -UseBasicParsing 'http://127.0.0.1:5180/dashboard'
@@ -83,112 +111,81 @@ if ($portal.StatusCode -ne 200 -or -not $portal.Content.Contains('Northstar')) {
 }
 ```
 
-Open `http://127.0.0.1:5173/` in Chrome. Confirm the UI terminal reports the current
-worktree and that the page includes the **Guided / All facts** switch after analysis.
+Open `http://127.0.0.1:5177/`. Before clicking, verify the header and provenance
+panel both say **Offline mock configured**. After completion they must say
+**Deterministic offline mock** and explicitly state that this is not a fresh extraction.
 
-## Collision-safe isolated startup
+## Unified walkthrough
 
-Use this instead of terminating an unknown process. The portal stays on `5180`; verify
-it as above. The overrides accept only a decimal port and a `127.0.0.1` HTTP origin.
+1. Show the one server-owned goal and Northstar website. Point out that questions are
+   locked pending verified policy extraction.
+2. Click the single **Analyze Website** button. Show queued, collecting, source
+   selection, extraction, and validation states.
+3. After delivery, show the truthful review-required result from the sanitized mock,
+   the Semantic Audit finding, exact citations, excluded actions, and technical trace.
+4. Switch between **Guided** and **All facts**. The views share one `UserState`; answers
+   replan locally without collection or Claude.
+5. Change an applicable fact such as Standard to Instant. Show the local decision
+   trace/counterfactual update and the `No Claude call` / `No browser collection`
+   comparison when available. A rejected permission remains unavailable regardless of
+   answers.
 
-Terminal 2:
+The current recorded/mock model correctly remains `review_required`; do not claim it
+authorizes cancellation. Every step is guidance-only and `autoExecutable: false`.
+
+## Explicit replay fallback
+
+If the mock API is unavailable during judging, stop only the UI terminal and restart it
+with one of these explicit policies. Neither command contacts Anthropic or Playwright.
+
+Previously generated Sonnet replay:
 
 ```powershell
-$env:BUREAUCRACY_SLAYER_MOCK_API_PORT = '5191'
-npm.cmd run dev:mock-api
-```
-
-Terminal 3:
-
-```powershell
-$env:BUREAUCRACY_SLAYER_LIVE_API_ORIGIN = 'http://127.0.0.1:5191'
+$env:BUREAUCRACY_SLAYER_EXECUTION_POLICY = 'recorded_replay'
+Remove-Item Env:BUREAUCRACY_SLAYER_LIVE_API_ORIGIN -ErrorAction SilentlyContinue
 npm.cmd run dev:ui -- --port 5177
 ```
 
-Required safety check:
+Hand-checked successful decision fixture:
 
 ```powershell
-$probe = Invoke-RestMethod 'http://127.0.0.1:5177/api/live-extraction/offline-mock'
-if ($probe.offlineMock -ne $true) { throw 'Isolated UI is not targeting the mock API' }
+$env:BUREAUCRACY_SLAYER_EXECUTION_POLICY = 'verified_fixture'
+Remove-Item Env:BUREAUCRACY_SLAYER_LIVE_API_ORIGIN -ErrorAction SilentlyContinue
+npm.cmd run dev:ui -- --port 5177
 ```
 
-Then open `http://127.0.0.1:5177/`. Do not press **Start live extraction** unless the
-mock terminal says `Offline Live Extraction mock listening` and the probe succeeds.
+The header exposes **Recorded Sonnet replay** or **Verified fixture**. Analyze once to
+load its canonical facts. The fixture is the controlled path for demonstrating a ready
+Scheduled + Standard route and deterministic Standard → Instant prohibition; disclose
+that it is hand-checked replay data.
 
-## Truthful scenario order
+## Recovery and interruption
 
-1. **Verified Fixture → Dynamic replanning**: the truthful ready-cancellation path.
-   Analyze Scheduled + Standard + processing not begun, then open the cancellation
-   citation.
-2. In **Guided**, open earlier answers and change Transfer method to **instant**. The
-   planner removes cancellation, marks it `PROHIBITED`, adds Contact support, and shows
-   `Snapshot unchanged`, `Evidence unchanged`, `No Claude call`, and `No browser collection`.
-3. **Recorded Sonnet extraction**: a genuine previously generated model, revalidated
-   locally. It remains `Human review required` because Semantic Audit rejects overbroad
-   cancellation and recovery permissions.
-4. **Live Sonnet extraction with the deterministic mock**: demonstrate queued/running/
-   validating lifecycle and browser-side verification. Say explicitly that the response
-   is a sanitized deterministic mock of the recorded result, not a new Sonnet call.
-
-Do not claim that Recorded or Live mock authorizes cancellation. Their correct result is
-review-required. Every displayed step remains guidance-only with `autoExecutable: false`.
-
-## Reset, refresh, and fallback
-
-- Switching modes creates a fresh mode workspace; facts do not leak across modes.
-- Reloading returns the presentation to Verified Fixture.
-- During a running Live mock job, reload, select **Live Sonnet extraction**, then click
-  **Resume live extraction**. This polls the retained job without another POST.
-- A completed Live result is not persisted through a full reload. After a refresh, use
-  **Recorded Sonnet extraction** as the deterministic fallback.
-- The mock accepts one physical job per process. For another Live rehearsal, stop only
-  the mock terminal with `Ctrl+C`, restart `npm.cmd run dev:mock-api`, rerun the mock probe,
-  and then start Live again.
-- If the mock is unavailable, the UI must show `Live extraction failed operationally`
-  with no stale guidance. Restart the mock, rerun the probe, and click
-  **Retry live extraction**. The retained request ID keeps the POST idempotent.
-- Browser Back/Forward is safe but is not the presentation reset mechanism; switch modes
-  or reload instead.
-
-## Deterministic fallback
-
-If Live is slow, unavailable, or its probe fails, do not point the UI at the real server.
-Skip Live and show Recorded Sonnet. Recorded uses the immutable saved snapshot/model,
-recomputes hashes and evidence, runs Semantic Audit, evaluator, and planner locally, and
-makes no Claude or Playwright calls.
+- During a running job, refresh and press **Resume analysis**. The retained job is
+  polled without another POST.
+- If the initial POST outcome is ambiguous, **Retry analysis** reuses the same request
+  ID. Duplicate clicks coalesce into one in-flight operation.
+- A failed fresh analysis clears prior facts and guidance. It never falls back silently.
+- A completed result is not persisted across a full refresh. Restart the mock for a new
+  offline job, rerun the probe, and analyze again; or explicitly restart the UI in a
+  replay policy.
+- The mock accepts one physical job per process. Restart its own terminal between full
+  walkthroughs.
 
 ## Safe shutdown
 
-Press `Ctrl+C` once in each terminal you started: UI, mock API, then portal. Close the
-isolated terminals to clear their environment overrides. Do not use broad `Stop-Process
-node`, and never stop a PID you did not start and verify.
+Press `Ctrl+C` once in each terminal you started: UI, mock/API, then portal. Close the
+terminals to clear environment overrides. Never use a broad `Stop-Process node`.
 
 ## Pre-judging checklist
 
-- [ ] `git status --short` has no unexpected tracked changes.
-- [ ] UI, portal, and mock terminals show the intended commands and ports.
-- [ ] The mock-only probe succeeds through the UI URL.
-- [ ] Chrome is on the current UI origin, not a stale tab.
-- [ ] Fixture Dynamic replanning starts at Scheduled + Standard.
-- [ ] Fixture citation opens and contains “Scheduled transfers may be canceled before processing begins.”
-- [ ] Standard → Instant shows cancellation `PROHIBITED` and `No Claude call`.
-- [ ] Recorded Sonnet shows Semantic review and no guidance steps.
-- [ ] Live mock has been restarted if it already served one job.
-- [ ] Browser zoom is normal; no DevTools or credentials are visible.
-- [ ] The presenter will call Fixture, Recorded, and Live mock by their exact names.
-
-## Chrome rehearsal record (2026-10-17)
-
-Three complete rehearsals passed on current `master` using Chrome and the isolated mock:
-
-| Run | Elapsed interaction time | Result |
-| --- | ---: | --- |
-| A | 71.1 s | Pass — mobile 390×844, keyboard controls, citation, Guided backtracking, Instant prohibition, Recorded review, Live refresh/resume |
-| B | 36.6 s | Pass — normal viewport, all required decisions and refresh/resume |
-| C | 38.7 s | Pass — normal viewport, all required decisions and refresh/resume |
-
-These timings measure automated on-screen interactions, not spoken narration. Fixture
-ready rendering was observed at 0.74 s; mock progress appeared at 0.34 s. Chrome showed
-no application console warnings or errors. A preliminary run was partial because stale
-servers occupied `5173` and `5190`; it is not counted among the three passes and directly
-motivated the isolated-port and mock-probe safeguards.
+- [ ] `git status --short` contains no unexpected tracked changes.
+- [ ] The correct UI, portal, and API process identities are known.
+- [ ] `BUREAUCRACY_SLAYER_EXECUTION_POLICY` matches the intended source.
+- [ ] The mock probe succeeds through the exact UI origin before offline analysis.
+- [ ] Only one **Analyze Website** button is visible.
+- [ ] Personalization is locked before and interactive after verified delivery.
+- [ ] Provenance says mock/replay/live truthfully.
+- [ ] Review-required rules never create a ready route.
+- [ ] Standard → Instant replanning does not collect or call Claude.
+- [ ] Browser zoom is normal and no credentials are visible.

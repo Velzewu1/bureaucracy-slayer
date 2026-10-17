@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { resolveMockApiPort } from "../../scripts/mock-live-extraction-server.js";
 import { analysisProgressLabel } from "../../src/ui/App.js";
-import { resolveLiveApiOrigin } from "../../vite.ui.config.js";
+import {
+  resolveLiveApiOrigin,
+  resolveUiExecutionPolicy,
+} from "../../vite.ui.config.js";
 
 describe("offline demo startup configuration", () => {
   it("keeps the documented default ports", () => {
@@ -15,6 +18,7 @@ describe("offline demo startup configuration", () => {
     expect(resolveLiveApiOrigin("http://127.0.0.1:5191")).toBe(
       "http://127.0.0.1:5191",
     );
+    expect(resolveUiExecutionPolicy("offline_mock")).toBe("offline_mock");
   });
 
   it("rejects invalid ports and non-loopback API origins", () => {
@@ -23,15 +27,18 @@ describe("offline demo startup configuration", () => {
     expect(() => resolveLiveApiOrigin("https://127.0.0.1:5191")).toThrow(/loopback HTTP/u);
     expect(() => resolveLiveApiOrigin("http://example.com:5191")).toThrow(/loopback HTTP/u);
     expect(() => resolveLiveApiOrigin("http://127.0.0.1:5191/path")).toThrow(/loopback HTTP/u);
+    expect(resolveUiExecutionPolicy("recorded_replay")).toBe("recorded_replay");
+    expect(resolveUiExecutionPolicy("verified_fixture")).toBe("verified_fixture");
+    expect(() => resolveUiExecutionPolicy("recorded")).toThrow(/offline_mock/u);
   });
 });
 
-describe("analysis progress labels", () => {
-  it("does not label recorded-model validation as fixture analysis", () => {
+describe("unified analysis progress labels", () => {
+  it("uses one product label and keeps local replanning distinct", () => {
     expect(analysisProgressLabel("recorded_sonnet", "analyzing")).toBe(
-      "Recorded model validation",
+      "Website analysis",
     );
-    expect(analysisProgressLabel("verified_fixture", "analyzing")).toBe("Fixture analysis");
+    expect(analysisProgressLabel("verified_fixture", "analyzing")).toBe("Website analysis");
     expect(analysisProgressLabel("recorded_sonnet", "replanning")).toBe(
       "Deterministic replan",
     );

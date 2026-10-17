@@ -72,6 +72,11 @@ export type DemoAnalysis = Readonly<{
   decisionIntelligence: DecisionIntelligence;
   semanticAuditFindings: readonly RecordedSemanticFinding[];
   source: Readonly<{
+    kind:
+      | "verified_fixture"
+      | "recorded_replay"
+      | "live_extraction"
+      | "offline_mock_replay";
     label: string;
     extractionPreviouslyCompleted: boolean;
     modelName?: string;

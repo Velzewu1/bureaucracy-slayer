@@ -94,6 +94,7 @@ export class FixtureDemoProvider implements DemoDataProvider {
       userState,
       semanticAuditFindings: [],
       source: {
+        kind: "verified_fixture",
         label: "Verified fixture",
         extractionPreviouslyCompleted: true,
       },

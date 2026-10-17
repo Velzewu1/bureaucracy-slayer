@@ -53,6 +53,7 @@ export type LiveExtractionClientErrorCode =
   | "GOAL_MISMATCH"
   | "PORTAL_MISMATCH"
   | "RECOVERY_STATE_INVALID"
+  | "SOURCE_POLICY_MISMATCH"
   | "SESSION_MISSING"
   | "CLIENT_STOPPED";
 
@@ -117,6 +118,7 @@ const LiveExtractionRecoveryMetadataSchema = z.discriminatedUnion("kind", [
 ]);
 
 export type LiveExtractionProviderOptions = Readonly<{
+  expectedSource?: "live" | "offline_mock";
   fetch?: FetchImplementation;
   generateRequestId?: () => LiveExtractionRequestId;
   now?: () => string;
@@ -140,6 +142,7 @@ type Operation = {
 
 type LiveSession = Readonly<{
   id: string;
+  responseSource: "live" | "offline_mock";
   verified: VerifiedLiveArtifact;
 }>;
 
@@ -264,7 +267,9 @@ export class LiveExtractionProvider implements DemoDataProvider {
   readonly #nowMs: () => number;
   readonly #storage: LiveExtractionRecoveryStorage | undefined;
   readonly #wait: WaitImplementation;
+  readonly #expectedSource: "live" | "offline_mock" | undefined;
   #recoveryBlocked: boolean;
+  #responseSource: "live" | "offline_mock" | undefined;
   #session: LiveSession | undefined;
   #activeRequest: ActiveRequest | undefined;
   #operation: Operation | undefined;
@@ -278,6 +283,7 @@ export class LiveExtractionProvider implements DemoDataProvider {
     this.#nowMs = options.nowMs ?? Date.now;
     this.#storage = options.storage ?? defaultStorage.storage;
     this.#wait = options.wait ?? wait;
+    this.#expectedSource = options.expectedSource;
     this.#recoveryBlocked = options.storage === undefined && defaultStorage.unavailable;
     this.#restoreRecovery();
   }
@@ -404,6 +410,31 @@ export class LiveExtractionProvider implements DemoDataProvider {
         "The live extraction server returned a response that was not declared as JSON.",
       );
     }
+    const responseSource =
+      response.headers.get("x-bureaucracy-slayer-offline-mock") === "1"
+        ? "offline_mock"
+        : "live";
+    if (
+      this.#expectedSource !== undefined &&
+      responseSource !== this.#expectedSource
+    ) {
+      throw new LiveExtractionClientError(
+        "SOURCE_POLICY_MISMATCH",
+        this.#expectedSource === "offline_mock"
+          ? "Offline demonstration mode refused a response that was not marked by the deterministic mock API."
+          : "Live analysis mode refused a deterministic mock response that was not explicitly configured.",
+      );
+    }
+    if (
+      this.#responseSource !== undefined &&
+      responseSource !== this.#responseSource
+    ) {
+      throw new LiveExtractionClientError(
+        "SOURCE_POLICY_MISMATCH",
+        "The analysis API changed provenance during one extraction job.",
+      );
+    }
+    this.#responseSource = responseSource;
     const body = await parseJson(response, signal);
     signal.throwIfAborted();
     if (response.status === expectedStatus) return body;
@@ -532,7 +563,10 @@ export class LiveExtractionProvider implements DemoDataProvider {
       mode: "live_sonnet",
       replanMode: "deterministic_engine",
       goal: artifact.goal,
-      portalName: "Northstar Mock Bank (live extraction)",
+      portalName:
+        session.responseSource === "offline_mock"
+          ? "Northstar Mock Bank (offline mock replay)"
+          : "Northstar Mock Bank (live extraction)",
       portalUrl: artifact.portalUrl,
       snapshot: artifact.sourceSnapshot,
       model: artifact.procedureModel,
@@ -542,8 +576,15 @@ export class LiveExtractionProvider implements DemoDataProvider {
       userState,
       semanticAuditFindings: semanticAudit.findings,
       source: {
-        label: "Live Sonnet extraction",
-        extractionPreviouslyCompleted: false,
+        kind:
+          session.responseSource === "offline_mock"
+            ? "offline_mock_replay"
+            : "live_extraction",
+        label:
+          session.responseSource === "offline_mock"
+            ? "Deterministic offline mock"
+            : "Live Sonnet extraction",
+        extractionPreviouslyCompleted: session.responseSource === "offline_mock",
         modelName: artifact.provenance.modelName,
         recordedAt: artifact.provenance.completedAt,
       },
@@ -623,6 +664,7 @@ export class LiveExtractionProvider implements DemoDataProvider {
       }
       const session: LiveSession = {
         id: `session_${job.jobId.slice("job_".length)}`,
+        responseSource: this.#responseSource ?? "live",
         verified,
       };
       this.#session = session;

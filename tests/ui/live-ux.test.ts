@@ -140,12 +140,12 @@ describe("Live personalization UX", () => {
       }),
     );
 
-    expect(markup).toContain("Resume live extraction");
+    expect(markup).toContain("Resume analysis");
     expect(markup).toContain("Questions pending verification");
     expect(markup).not.toContain("payment.status");
   });
 
-  it("leaves Fixture and Recorded personalization controls unchanged", () => {
+  it("locks personalization before verification for every retained provider seam", () => {
     const fixtureMarkup = renderToStaticMarkup(
       createElement(App, { initialMode: "verified_fixture" }),
     );
@@ -154,16 +154,15 @@ describe("Live personalization UX", () => {
     );
 
     for (const markup of [fixtureMarkup, recordedMarkup]) {
-      expect(markup).toContain("Your facts");
-      expect(markup).toContain("Replan with updated facts");
-      expect(markup).not.toContain("Questions pending verification");
+      expect(markup).toContain("Questions pending verification");
+      expect(markup).not.toContain("Replan with updated facts");
     }
     const firstRecordedFact =
       recordedExtractionBundle.procedureModel.factDefinitions[0];
     if (firstRecordedFact === undefined) {
       throw new Error("Recorded fixture must declare at least one fact.");
     }
-    expect(recordedMarkup).toContain(firstRecordedFact.key);
+    expect(recordedMarkup).not.toContain(firstRecordedFact.key);
   });
 });
 

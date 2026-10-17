@@ -9,7 +9,6 @@ import {
 } from "../../src/ui/adapters/liveExtractionProvider.js";
 import { recordedExtractionBundle } from "../../src/ui/adapters/recordedExtractionProvider.js";
 import { App, deriveLiveRecoveryControls } from "../../src/ui/App.js";
-import { ModeSelector } from "../../src/ui/components/ModeSelector.js";
 import {
   demoGoal,
   demoSnapshot,
@@ -164,19 +163,15 @@ describe("UI mode state", () => {
     expect(stopped.error).toContain("was not cancelled");
   });
 
-  it("renders all three explicit extraction modes", () => {
+  it("renders one product entry point without the development mode selector", () => {
     const markup = renderToStaticMarkup(
-      createElement(ModeSelector, {
-        mode: "live_sonnet",
-        disabled: false,
-        onChange: () => {},
-      }),
+      createElement(App),
     );
 
-    expect(markup).toContain("Verified fixture");
-    expect(markup).toContain("Recorded Sonnet extraction");
-    expect(markup).toContain("Live Sonnet extraction");
-    expect(markup).toContain('value="live_sonnet"');
+    expect(markup).not.toContain('aria-label="Demo mode"');
+    expect(markup).not.toContain('name="demo-mode"');
+    expect(markup.match(/>Analyze Website<\/button>/gu)).toHaveLength(1);
+    expect(markup).toContain("Live website analysis");
   });
 
   it("renders request retry and retained-job resume states truthfully in App", () => {
@@ -192,10 +187,10 @@ describe("UI mode state", () => {
         providers: { live_sonnet: resumableProvider("job") },
       }),
     );
-    expect(retryMarkup).toContain("Retry live extraction");
+    expect(retryMarkup).toContain("Retry analysis");
     expect(retryMarkup).toContain("same idempotent start request");
-    expect(resumeMarkup).toContain("Resume live extraction");
-    expect(resumeMarkup).toContain("without starting another paid extraction");
+    expect(resumeMarkup).toContain("Resume analysis");
+    expect(resumeMarkup).toContain("without starting another extraction");
   });
 
   it("suppresses recovery actions while extraction is actively running", () => {
@@ -227,9 +222,9 @@ describe("UI mode state", () => {
       createElement(App, { initialMode: "recorded_sonnet" }),
     );
 
-    expect(blockedMarkup).toContain("Live recovery blocked");
+    expect(blockedMarkup).toContain("Recovery blocked");
     expect(blockedMarkup).toContain("No backend request will be sent");
     expect(fixtureMarkup).toContain("Verified fixture");
-    expect(recordedMarkup).toContain("Recorded Sonnet extraction");
+    expect(recordedMarkup).toContain("Recorded Sonnet replay");
   });
 });

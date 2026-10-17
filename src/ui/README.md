@@ -61,24 +61,27 @@ npm install --save-dev --save-exact @testing-library/react@16.3.0 @testing-libra
 - `replan(sessionId, userState)` returns a new canonical planner result.
 - `getEvidence(sessionId)` returns the canonical `EvidenceResult`.
 
-`FixtureDemoProvider` remains the default, hand-checked demonstration.
-`RecordedExtractionProvider` is a separate mode bound to the exact goal and
-portal from the saved Sonnet run. The build step validates the three source
+`LiveExtractionProvider` is the production default behind the single visible
+**Analyze Website** action. `FixtureDemoProvider` and `RecordedExtractionProvider`
+remain non-UI regression and explicit operator-fallback boundaries. The build step validates the three source
 artifacts, replays their staged conversion, runs the semantic qualifier audit,
 and writes only the sanitized bundle in `generated/recordedSonnetBundle.ts`.
 At runtime the provider recomputes hashes, audit findings, evidence, evaluation,
 and planning; it never calls Anthropic or Playwright.
 
-To run the two-mode demo locally:
+To run the unified product against the genuine live server:
 
 ```powershell
 npm.cmd run build:recorded
 npm.cmd run dev:ui
 ```
 
-The **Recorded Sonnet extraction** selector is intentionally locked to its
-recorded goal and local snapshot URL. Changing user facts performs only bounded,
-deterministic replanning and cannot clear semantic-review gates.
+There is no user-facing provider selector. Set `BUREAUCRACY_SLAYER_EXECUTION_POLICY`
+before starting Vite when an operator explicitly needs `offline_mock`,
+`recorded_replay`, or `verified_fixture`. Mock mode additionally requires responses
+to carry the mock-only provenance header; live mode rejects that header. Changing user
+facts performs only bounded deterministic replanning and cannot clear semantic-review
+gates.
 
 ## Guided personalization
 

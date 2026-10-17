@@ -288,6 +288,16 @@ function jsonResponse(body: unknown, statusCode = 200): Response {
   });
 }
 
+function offlineMockJsonResponse(body: unknown, statusCode = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status: statusCode,
+    headers: {
+      "Content-Type": "application/json",
+      "x-bureaucracy-slayer-offline-mock": "1",
+    },
+  });
+}
+
 function memoryStorage(initialValue?: string): LiveExtractionRecoveryStorage & {
   value(): string | null;
 } {
@@ -360,6 +370,51 @@ function request(userState = scheduledStandardState) {
 }
 
 describe("LiveExtractionProvider", () => {
+  it("enforces the configured transport provenance and labels offline replay truthfully", async () => {
+    const wrongLiveProvider = new LiveExtractionProvider({
+      expectedSource: "offline_mock",
+      fetch: async () => jsonResponse(startResponse(), 202),
+      generateRequestId: () => requestId,
+      wait: async () => {},
+    });
+    await expect(wrongLiveProvider.analyze(request())).rejects.toMatchObject({
+      code: "SOURCE_POLICY_MISMATCH",
+    });
+
+    const wrongMockProvider = new LiveExtractionProvider({
+      expectedSource: "live",
+      fetch: async () => offlineMockJsonResponse(startResponse(), 202),
+      generateRequestId: () => requestId,
+      wait: async () => {},
+    });
+    await expect(wrongMockProvider.analyze(request())).rejects.toMatchObject({
+      code: "SOURCE_POLICY_MISMATCH",
+    });
+
+    const responses = [
+      offlineMockJsonResponse(startResponse(), 202),
+      offlineMockJsonResponse(succeeded(demoLiveArtifact())),
+    ];
+    const offlineProvider = new LiveExtractionProvider({
+      expectedSource: "offline_mock",
+      fetch: async () => {
+        const response = responses.shift();
+        if (response === undefined) throw new Error("Unexpected test fetch");
+        return response;
+      },
+      generateRequestId: () => requestId,
+      wait: async () => {},
+    });
+    await expect(offlineProvider.analyze(request())).resolves.toMatchObject({
+      portalName: "Northstar Mock Bank (offline mock replay)",
+      source: {
+        kind: "offline_mock_replay",
+        label: "Deterministic offline mock",
+        extractionPreviouslyCompleted: true,
+      },
+    });
+  });
+
   it("posts once, polls non-overlapping one-second phases, and evaluates the verified result", async () => {
     const artifact = demoLiveArtifact();
     const phases: string[] = [];
@@ -903,6 +958,7 @@ describe("LiveExtractionProvider", () => {
 
     const proxyStorage = memoryStorage();
     const proxyFailure = new LiveExtractionProvider({
+      expectedSource: "offline_mock",
       fetch: async () => new Response("", {
         status: 500,
         headers: { "Content-Type": "text/plain" },

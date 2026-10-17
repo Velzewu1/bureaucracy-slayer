@@ -1,31 +1,17 @@
-import type { DemoScenario, DemoScenarioId } from "../types.js";
-
 type AnalysisSetupProps = Readonly<{
   goal: string;
   portalUrl: string;
-  scenarios: readonly DemoScenario[];
-  selectedScenarioId: DemoScenarioId;
   isBusy: boolean;
   hasAnalysis: boolean;
-  goalLocked?: boolean;
-  showScenarios?: boolean;
-  lockedGoalNote?: string;
-  onGoalChange: (goal: string) => void;
-  onScenarioChange: (scenarioId: DemoScenarioId) => void;
+  goalNote: string;
 }>;
 
 export function AnalysisSetup({
   goal,
   portalUrl,
-  scenarios,
-  selectedScenarioId,
   isBusy,
   hasAnalysis,
-  goalLocked = false,
-  showScenarios = true,
-  lockedGoalNote,
-  onGoalChange,
-  onScenarioChange,
+  goalNote,
 }: AnalysisSetupProps) {
   return (
     <section className="panel setup-panel" aria-labelledby="goal-heading">
@@ -49,13 +35,11 @@ export function AnalysisSetup({
         id="user-goal"
         className="goal-input"
         value={goal}
-        onChange={(event) => onGoalChange(event.currentTarget.value)}
         rows={3}
-        disabled={isBusy || goalLocked}
+        disabled
+        readOnly
       />
-      {goalLocked && lockedGoalNote !== undefined ? (
-        <p className="field-note">{lockedGoalNote}</p>
-      ) : null}
+      <p className="field-note">{goalNote}</p>
 
       <div className="portal-field">
         <div>
@@ -64,32 +48,6 @@ export function AnalysisSetup({
         </div>
         <span className="fictional-badge">Fictional test environment</span>
       </div>
-
-      {showScenarios ? <fieldset className="scenario-fieldset" disabled={isBusy}>
-        <legend>Presentation scenario</legend>
-        <p>Each scenario is a recorded, schema-validated fixture run through the real deterministic engine.</p>
-        <div className="scenario-grid">
-          {scenarios.map((scenario) => (
-            <label
-              className={`scenario-card ${
-                scenario.id === selectedScenarioId ? "scenario-card--selected" : ""
-              }`}
-              key={scenario.id}
-            >
-              <input
-                type="radio"
-                name="scenario"
-                value={scenario.id}
-                checked={scenario.id === selectedScenarioId}
-                onChange={() => onScenarioChange(scenario.id)}
-              />
-              <span className="scenario-card__experiment">{scenario.experiment}</span>
-              <strong>{scenario.label}</strong>
-              <span>{scenario.description}</span>
-            </label>
-          ))}
-        </div>
-      </fieldset> : null}
     </section>
   );
 }
