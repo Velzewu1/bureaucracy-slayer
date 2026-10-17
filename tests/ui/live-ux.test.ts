@@ -8,6 +8,7 @@ import {
   App,
   livePersonalizationState,
 } from "../../src/ui/App.js";
+import { LIVE_DEMO_GOAL } from "../../src/ui/adapters/liveExtractionProvider.js";
 import {
   LiveProgressPanel,
   liveProgressTitle,
@@ -48,6 +49,21 @@ function resumableProvider(resumeState: LiveResumeState): DemoDataProvider {
 }
 
 describe("Live personalization UX", () => {
+  it("presents the server-owned goal as locked context rather than a disabled form field", () => {
+    const markup = renderToStaticMarkup(
+      createElement(App, { initialMode: "live_sonnet" }),
+    );
+
+    expect(markup).toContain('data-testid="locked-goal"');
+    expect(markup).toContain("Locked demo goal");
+    expect(markup).toContain(LIVE_DEMO_GOAL);
+    expect(markup).toContain(
+      "The goal and fictional portal are server-owned for this bounded demonstration.",
+    );
+    expect(markup).not.toContain('id="user-goal"');
+    expect(markup).not.toContain("<textarea");
+  });
+
   it("keeps a disabled personalization section in the Live idle state", () => {
     const markup = renderToStaticMarkup(
       createElement(App, { initialMode: "live_sonnet" }),

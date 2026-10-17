@@ -28,22 +28,22 @@ export function AnalysisSetup({
         </span>
       </div>
 
-      <label className="field-label" htmlFor="user-goal">
-        Your goal
-      </label>
-      <textarea
-        id="user-goal"
-        className="goal-input"
-        value={goal}
-        rows={3}
-        disabled
-        readOnly
-      />
+      <div className="locked-context__heading">
+        <span className="field-label" id="locked-goal-label">Your goal</span>
+        <span className="locked-context__badge">Locked demo goal</span>
+      </div>
+      <p
+        aria-labelledby="locked-goal-label"
+        className="goal-context"
+        data-testid="locked-goal"
+      >
+        {goal}
+      </p>
       <p className="field-note">{goalNote}</p>
 
       <div className="portal-field">
         <div>
-          <span className="field-label">Portal URL</span>
+          <span className="field-label">Selected portal</span>
           <code>{portalUrl}</code>
         </div>
         <span className="fictional-badge">Fictional test environment</span>

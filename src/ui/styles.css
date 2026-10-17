@@ -407,13 +407,6 @@ main {
   line-height: 1.5;
 }
 
-.goal-input:disabled {
-  color: #43504a;
-  background: #f3f5f2;
-  cursor: not-allowed;
-  opacity: 1;
-}
-
 .panel {
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -487,14 +480,32 @@ main {
   font-weight: 800;
 }
 
-.goal-input {
-  width: 100%;
+.locked-context__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.locked-context__badge {
+  margin-bottom: 7px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #edf0eb;
+  color: #64706a;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.goal-context {
   min-height: 94px;
-  resize: vertical;
+  margin: 0;
   padding: 15px 17px;
   border: 1px solid #ccd4cb;
   border-radius: 12px;
-  background: #fbfcfa;
+  background: #f3f5f2;
   color: var(--ink);
   font-size: 1rem;
   font-weight: 560;
