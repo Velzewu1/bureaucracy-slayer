@@ -19,6 +19,7 @@ import {
 } from "./live-extraction/contract-fixtures.js";
 import {
   assertValidLiveJobTimeline,
+  LIVE_OFFLINE_MOCK_PROBE_ROUTE,
   startLiveMockApi,
   type LiveMockApi,
 } from "./live-extraction/mock-api.js";
@@ -342,6 +343,11 @@ describe("live extraction request and mock HTTP security", () => {
 
   it("returns no-store JSON, reports progress, and deduplicates a request ID", async () => {
     const api = await mockApi();
+    const probe = await fetch(`${api.origin}${LIVE_OFFLINE_MOCK_PROBE_ROUTE}`);
+    expect(probe.status).toBe(200);
+    expect(probe.headers.get("x-bureaucracy-slayer-offline-mock")).toBe("1");
+    expect(await probe.json()).toEqual({ offlineMock: true });
+
     const request = createLiveStartRequestFixture();
     const starts = await Promise.all([
       fetch(`${api.origin}/api/live-extraction/jobs`, {

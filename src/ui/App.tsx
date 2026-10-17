@@ -56,6 +56,11 @@ const liveProvider = new LiveExtractionProvider();
 
 type Activity = "analyzing" | "replanning" | null;
 
+export function analysisProgressLabel(mode: DemoMode, activity: Activity): string {
+  if (activity === "replanning") return "Deterministic replan";
+  return mode === "recorded_sonnet" ? "Recorded model validation" : "Fixture analysis";
+}
+
 export function deriveLiveRecoveryControls(
   activity: Activity,
   resumeState: LiveResumeState,
@@ -589,7 +594,7 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
                     <span />
                   </div>
                   <p className="eyebrow">
-                    {activity === "replanning" ? "Deterministic replan" : "Fixture analysis"}
+                    {analysisProgressLabel(workspace.mode, activity)}
                   </p>
                   <h2>
                     {activity === "replanning"

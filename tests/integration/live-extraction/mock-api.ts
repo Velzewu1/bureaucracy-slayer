@@ -18,8 +18,11 @@ import {
 const JSON_HEADERS = {
   "cache-control": "no-store",
   "content-type": "application/json; charset=utf-8",
+  "x-bureaucracy-slayer-offline-mock": "1",
   "x-content-type-options": "nosniff",
 } as const;
+
+export const LIVE_OFFLINE_MOCK_PROBE_ROUTE = "/api/live-extraction/offline-mock";
 
 const RUNNING_PHASE_ORDER = [
   "collecting",
@@ -161,6 +164,11 @@ export async function startLiveMockApi(
       const method = request.method ?? "UNKNOWN";
       const url = request.url ?? "/";
       requests.push({ method, url });
+
+      if (url === LIVE_OFFLINE_MOCK_PROBE_ROUTE && method === "GET") {
+        writeJson(response, 200, { offlineMock: true });
+        return;
+      }
 
       if (url === LIVE_EXTRACTION_START_ROUTE && method === "POST") {
         if (!contentTypeIsJson(request)) {

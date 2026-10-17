@@ -2,7 +2,31 @@ import { fileURLToPath, URL } from "node:url";
 
 import { defineConfig } from "vite";
 
-const LIVE_API_ORIGIN = "http://127.0.0.1:5190";
+const DEFAULT_LIVE_API_ORIGIN = "http://127.0.0.1:5190";
+
+export function resolveLiveApiOrigin(
+  value = process.env["BUREAUCRACY_SLAYER_LIVE_API_ORIGIN"],
+): string {
+  const candidate = value === undefined || value === "" ? DEFAULT_LIVE_API_ORIGIN : value;
+  const parsed = new URL(candidate);
+  if (
+    parsed.protocol !== "http:" ||
+    parsed.hostname !== "127.0.0.1" ||
+    parsed.port === "" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.pathname !== "/" ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
+  ) {
+    throw new Error(
+      "BUREAUCRACY_SLAYER_LIVE_API_ORIGIN must be a loopback HTTP origin such as http://127.0.0.1:5190.",
+    );
+  }
+  return parsed.origin;
+}
+
+const LIVE_API_ORIGIN = resolveLiveApiOrigin();
 
 export default defineConfig({
   root: fileURLToPath(new URL("./src/ui", import.meta.url)),
