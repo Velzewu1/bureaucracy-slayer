@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   ProcedureModelSchema,
   SiteSnapshotSchema,
+  UserStateSchema,
+  hashCanonical,
   hashText,
   type PolicyCondition,
   type ProcedureModel,
@@ -11,15 +13,26 @@ import {
 import {
   auditSemanticQualifiers,
   extractProcedure,
+  resumeProcedureMapping,
+  selectFocusedSources,
   type ClaudeMessageRequest,
   type ClaudeTransport,
 } from "../../src/extractor/index.js";
+import { evaluatePolicies, planActions } from "../../src/engine/index.js";
 import { validateEvidence } from "../../src/evidence/index.js";
+import {
+  hashPageSnapshotContent,
+  hashSiteSnapshotContent,
+  hashWebsiteActionFingerprint,
+} from "../../src/shared/index.js";
 import {
   baseProcedureModelFixture,
   baseSnapshotFixture,
   evidenceContextFixture,
+  plannerContextFixture,
+  scheduledStandardStateFixture,
 } from "../fixtures/p0.js";
+import { stagedFixturesFromModel } from "./compact-fixture.js";
 
 const USER_GOAL = "Cancel this transfer or identify an evidenced recovery path.";
 
@@ -115,6 +128,52 @@ function findingsFor(
   );
 }
 
+function claudeResponse(value: unknown): unknown {
+  return {
+    id: "msg_semantic_audit",
+    type: "message",
+    role: "assistant",
+    stop_reason: "end_turn",
+    content: [{ type: "text", text: JSON.stringify(value) }],
+  };
+}
+
+function stagedTransport(model: ProcedureModel): ClaudeTransport {
+  const stages = stagedFixturesFromModel(model);
+  let call = 0;
+  return {
+    createMessage(_request: ClaudeMessageRequest): Promise<unknown> {
+      call += 1;
+      return Promise.resolve(claudeResponse(call === 1 ? stages.policy : stages.mapping));
+    },
+  };
+}
+
+function bindSnapshotAndModel(
+  artifacts: Readonly<{ snapshot: SiteSnapshot; model: ProcedureModel }>,
+): Readonly<{ snapshot: SiteSnapshot; model: ProcedureModel }> {
+  const pages = artifacts.snapshot.pages.map((page) => {
+    const actions = page.actions.map((action) => ({
+      ...action,
+      fingerprint: hashWebsiteActionFingerprint(action),
+    }));
+    const content = { ...page, actions };
+    return { ...content, contentHash: hashPageSnapshotContent(content) };
+  });
+  const snapshot = SiteSnapshotSchema.parse({
+    ...artifacts.snapshot,
+    pages,
+    contentHash: hashSiteSnapshotContent({ ...artifacts.snapshot, pages }),
+  });
+  return {
+    snapshot,
+    model: ProcedureModelSchema.parse({
+      ...artifacts.model,
+      sourceSnapshotHash: snapshot.contentHash,
+    }),
+  };
+}
+
 describe("semantic qualifier audit", () => {
   it("accepts a permission when all explicit mandatory qualifiers are represented", () => {
     const source = "A scheduled standard transfer may be canceled before processing begins.";
@@ -123,7 +182,33 @@ describe("semantic qualifier audit", () => {
       cancellationCondition({ standard: true, beforeProcessing: true }),
     );
 
-    expect(findingsFor(artifacts, "rule_cancelpermit1")).toEqual([]);
+    const audit = auditSemanticQualifiers(artifacts.snapshot, artifacts.model);
+    expect(audit.findings).toEqual([]);
+
+    const validation = validateEvidence(
+      artifacts.snapshot,
+      artifacts.model,
+      evidenceContextFixture,
+      audit.findings,
+    );
+    expect(validation.ok).toBe(true);
+    if (!validation.ok) return;
+
+    const state = UserStateSchema.parse(scheduledStandardStateFixture);
+    const evaluation = evaluatePolicies(validation.model, validation.evidence, state);
+    expect(evaluation.decisions.find((decision) => decision.actionId === "proc_cancel01")).toMatchObject({
+      status: "allowed",
+      reasonCodes: ["PERMITTED"],
+    });
+    const plan = planActions(validation.model, validation.evidence, evaluation, state, {
+      ...plannerContextFixture,
+      userStateHash: hashCanonical(state),
+    });
+    expect(plan.status).toBe("ready");
+    expect(plan.steps.at(-1)).toMatchObject({
+      procedureActionId: "proc_cancel01",
+      autoExecutable: false,
+    });
   });
 
   it("flags a scheduled permission that omits the Standard category qualifier", () => {
@@ -279,20 +364,13 @@ describe("semantic qualifier audit", () => {
       source,
       cancellationCondition({ standard: false, beforeProcessing: true }),
     );
-    const transport: ClaudeTransport = {
-      createMessage(_request: ClaudeMessageRequest): Promise<unknown> {
-        return Promise.resolve({
-          id: "msg_semantic_audit",
-          type: "message",
-          role: "assistant",
-          stop_reason: "end_turn",
-          content: [{ type: "text", text: JSON.stringify(artifacts.model) }],
-        });
-      },
-    };
+    const findings = findingsFor(artifacts, "rule_cancelpermit1");
+    expect(findings).toContainEqual(
+      expect.objectContaining({ code: "MISSING_QUALIFIER", message: expect.stringContaining("standard") }),
+    );
 
     const outcome = await extractProcedure(artifacts.snapshot, USER_GOAL, {
-      transport,
+      transport: stagedTransport(artifacts.model),
       model: "claude-test-model",
       evidenceContext: evidenceContextFixture,
     });
@@ -300,7 +378,67 @@ describe("semantic qualifier audit", () => {
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
     expect(outcome.status).toBe("review_required");
-    expect(outcome.model.rules.find((rule) => rule.id === "rule_cancelpermit1")?.needsReview).toBe(false);
+    const permit = outcome.model.rules.find((rule) => rule.id === "rule_cancelpermit1");
+    expect(permit?.needsReview).toBe(false);
+    expect(permit?.citations).toEqual(artifacts.model.rules.find(
+      (rule) => rule.id === "rule_cancelpermit1",
+    )?.citations);
+    expect(outcome.evidence.rejectedRuleIds).toContain("rule_cancelpermit1");
+    expect(outcome.evidence.issues).toContainEqual(
+      expect.objectContaining({ code: "SEMANTIC_REVIEW_REQUIRED", ruleId: "rule_cancelpermit1" }),
+    );
+
+    const state = UserStateSchema.parse({
+      ...scheduledStandardStateFixture,
+      facts: {
+        ...scheduledStandardStateFixture.facts,
+        "payment.method": "instant",
+        "verification.begun": false,
+      },
+    });
+    const evaluation = evaluatePolicies(outcome.model, outcome.evidence, state);
+    expect(evaluation.decisions.find((decision) => decision.actionId === "proc_cancel01")).toMatchObject({
+      status: "review",
+      reasonCodes: expect.arrayContaining(["EVIDENCE_REJECTED"]),
+    });
+    const plan = planActions(outcome.model, outcome.evidence, evaluation, state, {
+      ...plannerContextFixture,
+      userStateHash: hashCanonical(state),
+    });
+    expect(plan.status).toBe("review_required");
+    expect(plan.steps).toEqual([]);
+  });
+
+  it("applies the same semantic permission gate when Stage 2 resumes from saved Stage 1", async () => {
+    const source = "A scheduled standard transfer may be canceled before processing begins.";
+    const artifacts = bindSnapshotAndModel(cancellationArtifacts(
+      source,
+      cancellationCondition({ standard: false, beforeProcessing: true }),
+    ));
+    const stages = stagedFixturesFromModel(artifacts.model);
+    const catalog = selectFocusedSources(artifacts.snapshot, USER_GOAL);
+    const transport: ClaudeTransport = {
+      createMessage(_request: ClaudeMessageRequest): Promise<unknown> {
+        return Promise.resolve(claudeResponse(stages.mapping));
+      },
+    };
+
+    const outcome = await resumeProcedureMapping(
+      artifacts.snapshot,
+      catalog,
+      stages.policy,
+      {
+        transport,
+        model: "claude-test-model",
+        evidenceContext: evidenceContextFixture,
+        sourceArtifactLabel: "saved-stage1.json",
+      },
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.status).toBe("review_required");
+    expect(outcome.provenance.stage1Source).toBe("saved_artifact");
     expect(outcome.evidence.rejectedRuleIds).toContain("rule_cancelpermit1");
     expect(outcome.evidence.issues).toContainEqual(
       expect.objectContaining({ code: "SEMANTIC_REVIEW_REQUIRED", ruleId: "rule_cancelpermit1" }),
