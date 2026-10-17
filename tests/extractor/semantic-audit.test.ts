@@ -32,6 +32,8 @@ import {
   plannerContextFixture,
   scheduledStandardStateFixture,
 } from "../fixtures/p0.js";
+import { RecordedExtractionBundleSchema } from "../../src/ui/recordedBundle.js";
+import { recordedSonnetBundleInput } from "../../src/ui/generated/recordedSonnetBundle.js";
 import { stagedFixturesFromModel } from "./compact-fixture.js";
 
 const USER_GOAL = "Cancel this transfer or identify an evidenced recovery path.";
@@ -101,6 +103,70 @@ function recoveryArtifacts(
   return {
     snapshot: replaceBlock(base.snapshot, "block_recovery1", source),
     model: replacePermit(modelWithDefinitions, "rule_recoverok01", source, appliesWhen),
+  };
+}
+
+function replaceActionDescription(
+  model: ProcedureModel,
+  actionId: string,
+  label: string,
+  description: string,
+): ProcedureModel {
+  return ProcedureModelSchema.parse({
+    ...model,
+    actions: model.actions.map((action) =>
+      action.id === actionId ? { ...action, label, description } : action,
+    ),
+  });
+}
+
+function focusedActionArtifacts(options: Readonly<{
+  permitSource: string;
+  externalSource: string;
+  actionLabel: string;
+  actionDescription: string;
+  appliesWhen: PolicyCondition;
+  extraDefinitions?: readonly FactDefinition[];
+  extraRules?: readonly ProcedureModel["rules"][number][];
+}>): Readonly<{ snapshot: SiteSnapshot; model: ProcedureModel }> {
+  const base = baseArtifacts();
+  const snapshot = replaceBlock(
+    replaceBlock(base.snapshot, "block_general01", options.permitSource),
+    "block_instant01",
+    options.externalSource,
+  );
+  const permitOnly = ProcedureModelSchema.parse({
+    ...base.model,
+    factDefinitions: [...base.model.factDefinitions, ...(options.extraDefinitions ?? [])],
+    rules: [
+      ...base.model.rules.filter((rule) => rule.actionId !== "proc_cancel01"),
+      {
+        ...base.model.rules.find((rule) => rule.id === "rule_cancelpermit1"),
+        id: "rule_cancelpermit1",
+        actionId: "proc_cancel01",
+        effect: "permit",
+        appliesWhen: options.appliesWhen,
+        citations: [{
+          pageId: "page_policy001",
+          pageUrl: "https://northstar.test/help/transfers",
+          blockId: "block_general01",
+          excerpt: options.permitSource,
+          actionIds: [],
+        }],
+        semanticConfidence: 0.9,
+        needsReview: false,
+      },
+      ...(options.extraRules ?? []),
+    ],
+  });
+  return {
+    snapshot,
+    model: replaceActionDescription(
+      permitOnly,
+      "proc_cancel01",
+      options.actionLabel,
+      options.actionDescription,
+    ),
   };
 }
 
@@ -283,12 +349,17 @@ describe("semantic qualifier audit", () => {
 
   it("flags an explicit related exception on another evidence block when no restrictive rule models it", () => {
     const base = baseArtifacts();
+    const snapshot = replaceBlock(
+      base.snapshot,
+      "block_conflict01",
+      "Transfer details may be viewed while processing continues.",
+    );
     const model = ProcedureModelSchema.parse({
       ...base.model,
       rules: base.model.rules.filter((rule) => rule.id !== "rule_instantdeny1"),
     });
 
-    expect(findingsFor({ snapshot: base.snapshot, model }, "rule_cancelpermit1")).toContainEqual(
+    expect(findingsFor({ snapshot, model }, "rule_cancelpermit1")).toContainEqual(
       expect.objectContaining({ code: "UNMODELED_EXCEPTION", message: expect.stringContaining("block_instant01") }),
     );
   });
@@ -325,13 +396,320 @@ describe("semantic qualifier audit", () => {
       cancellationCondition({ standard: true, beforeProcessing: true }),
     );
     const unrelated = "Subscriptions cannot be canceled after billing starts.";
-    const snapshot = replaceBlock(artifacts.snapshot, "block_instant01", unrelated);
+    const snapshot = replaceBlock(
+      replaceBlock(artifacts.snapshot, "block_instant01", unrelated),
+      "block_conflict01",
+      "Subscription exports may be viewed while billing is active.",
+    );
     const model = ProcedureModelSchema.parse({
       ...artifacts.model,
       rules: artifacts.model.rules.filter((rule) => rule.id !== "rule_instantdeny1"),
     });
 
     expect(findingsFor({ snapshot, model }, "rule_cancelpermit1")).toEqual([]);
+  });
+
+  it("collapses the recorded cancellation noise to the missing Standard scope with source provenance", () => {
+    const bundle = RecordedExtractionBundleSchema.parse(recordedSonnetBundleInput);
+    const findings = findingsFor(
+      { snapshot: bundle.sourceSnapshot, model: bundle.procedureModel },
+      "rule_r3_permit_cancel_scheduled",
+    );
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        code: "MISSING_QUALIFIER",
+        blockId: "block_fc059175893c4915951c",
+        excerpt: expect.stringContaining("scheduled standard transfer"),
+        message: expect.stringContaining("standard"),
+      }),
+    ]);
+  });
+
+  it("keeps scheduled or pending Instant cancellation fail-closed", () => {
+    const bundle = RecordedExtractionBundleSchema.parse(recordedSonnetBundleInput);
+    const audit = auditSemanticQualifiers(bundle.sourceSnapshot, bundle.procedureModel);
+    const validation = validateEvidence(
+      bundle.sourceSnapshot,
+      bundle.procedureModel,
+      evidenceContextFixture,
+      audit.findings,
+    );
+    expect(validation.ok).toBe(true);
+    if (!validation.ok) return;
+
+    for (const status of ["scheduled", "pending"] as const) {
+      const state = UserStateSchema.parse({
+        schemaVersion: 1,
+        revision: status === "scheduled" ? 1 : 2,
+        facts: {
+          transfer_status: status,
+          processing_started: false,
+          initiated_by_user: true,
+          transfer_type: "instant",
+        },
+      });
+      const evaluation = evaluatePolicies(validation.model, validation.evidence, state);
+      expect(evaluation.decisions.find(
+        (decision) => decision.actionId === "proc_cancel_transfer",
+      )?.status).not.toBe("allowed");
+    }
+  });
+
+  it("does not contaminate recovery eligibility with cancellation restrictions or disclaimers", () => {
+    const bundle = RecordedExtractionBundleSchema.parse(recordedSonnetBundleInput);
+    const findings = findingsFor(
+      { snapshot: bundle.sourceSnapshot, model: bundle.procedureModel },
+      "rule_r4_permit_recovery_completed_self_initiated",
+    );
+    const recoveryRule = bundle.procedureModel.rules.find(
+      (rule) => rule.id === "rule_r4_permit_recovery_completed_self_initiated",
+    );
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        code: "AMBIGUOUS_PERMISSION_SCOPE",
+        blockId: "block_dd35d4ab423bc204bf21",
+      }),
+    ]);
+    expect(findings.some((finding) => [
+      "block_0408d3189733d101eb07",
+      "block_62f0e387028737117b0d",
+      "block_76a78eb111477e8c92e8",
+    ].includes(finding.blockId))).toBe(false);
+    expect(recoveryRule).toMatchObject({
+      needsReview: true,
+      reviewReason: expect.stringContaining("not guaranteed"),
+    });
+  });
+
+  it("ignores an unrelated restriction on another action in the same policy domain", () => {
+    const artifacts = focusedActionArtifacts({
+      permitSource: "A verified account may be closed online.",
+      externalSource: "Verified accounts cannot export statements after archival begins.",
+      actionLabel: "Close account",
+      actionDescription: "Close the user's verified account online.",
+      appliesWhen: { kind: "fact", fact: "account.verified", op: "eq", value: true },
+      extraDefinitions: [{
+        key: "account.verified", label: "Account is verified", type: "boolean", sensitive: false,
+      }],
+    });
+
+    expect(findingsFor(artifacts, "rule_cancelpermit1")).toEqual([]);
+  });
+
+  it("does not turn outcome warnings or fictional-service disclaimers into eligibility conditions", () => {
+    const base = recoveryArtifacts(
+      "Completed transfers may be submitted for recovery review.",
+      { kind: "fact", fact: "payment.status", op: "eq", value: "completed" },
+    );
+    const outcomeWarning = replaceBlock(
+      base.snapshot,
+      "block_instant01",
+      "Recovery is not guaranteed and may not return funds. This is a fictional bank; no real accounts are involved.",
+    );
+    const model = ProcedureModelSchema.parse({
+      ...base.model,
+      rules: base.model.rules.filter((rule) => rule.id !== "rule_instantdeny1"),
+    });
+
+    expect(findingsFor({ snapshot: outcomeWarning, model }, "rule_recoverok01")).toEqual([]);
+  });
+
+  it("does not treat a nonexclusive alternative procedure as an exception", () => {
+    const artifacts = focusedActionArtifacts({
+      permitSource: "A verified account may be closed online.",
+      externalSource: "If you prefer, call support instead to close the account.",
+      actionLabel: "Close account",
+      actionDescription: "Close the user's verified account online.",
+      appliesWhen: { kind: "fact", fact: "account.verified", op: "eq", value: true },
+      extraDefinitions: [{
+        key: "account.verified", label: "Account is verified", type: "boolean", sensitive: false,
+      }],
+    });
+
+    expect(findingsFor(artifacts, "rule_cancelpermit1")).toEqual([]);
+  });
+
+  it("treats an explicitly exclusive procedure as a restriction", () => {
+    const artifacts = focusedActionArtifacts({
+      permitSource: "A verified account may be closed online.",
+      externalSource: "Accounts must be closed by calling support.",
+      actionLabel: "Close account",
+      actionDescription: "Close the user's verified account online.",
+      appliesWhen: { kind: "fact", fact: "account.verified", op: "eq", value: true },
+      extraDefinitions: [{
+        key: "account.verified", label: "Account is verified", type: "boolean", sensitive: false,
+      }],
+    });
+
+    expect(findingsFor(artifacts, "rule_cancelpermit1")).toContainEqual(
+      expect.objectContaining({ code: "UNMODELED_EXCEPTION", blockId: "block_instant01" }),
+    );
+  });
+
+  it("recognizes a semantically equivalent prohibition cited by another block", () => {
+    const artifacts = focusedActionArtifacts({
+      permitSource: "A verified account may be closed online.",
+      externalSource: "Premium accounts cannot be closed online.",
+      actionLabel: "Close account",
+      actionDescription: "Close the user's verified account online.",
+      appliesWhen: { kind: "fact", fact: "account.verified", op: "eq", value: true },
+      extraDefinitions: [
+        { key: "account.verified", label: "Account is verified", type: "boolean", sensitive: false },
+        {
+          key: "account.type", label: "Account type", type: "string",
+          allowedValues: ["basic", "premium"], sensitive: false,
+        },
+      ],
+      extraRules: [{
+        id: "rule_premium_close_prohibition",
+        actionId: "proc_cancel01",
+        effect: "prohibit",
+        appliesWhen: { kind: "fact", fact: "account.type", op: "eq", value: "premium" },
+        citations: [{
+          pageId: "page_policy001",
+          pageUrl: "https://northstar.test/help/transfers",
+          blockId: "block_support01",
+          excerpt: "If a transfer cannot be canceled, contact support for available options.",
+          actionIds: [],
+        }],
+        semanticConfidence: 0.9,
+        needsReview: false,
+      }],
+    });
+
+    expect(findingsFor(artifacts, "rule_cancelpermit1")).toEqual([]);
+  });
+
+  it("reports a genuinely missing account restriction at the offending block", () => {
+    const externalSource = "Premium accounts cannot be closed online.";
+    const artifacts = focusedActionArtifacts({
+      permitSource: "A verified account may be closed online.",
+      externalSource,
+      actionLabel: "Close account",
+      actionDescription: "Close the user's verified account online.",
+      appliesWhen: { kind: "fact", fact: "account.verified", op: "eq", value: true },
+      extraDefinitions: [
+        { key: "account.verified", label: "Account is verified", type: "boolean", sensitive: false },
+        {
+          key: "account.type", label: "Account type", type: "string",
+          allowedValues: ["basic", "premium"], sensitive: false,
+        },
+      ],
+    });
+
+    expect(findingsFor(artifacts, "rule_cancelpermit1")).toEqual([
+      expect.objectContaining({
+        code: "UNMODELED_EXCEPTION",
+        pageId: "page_policy001",
+        blockId: "block_instant01",
+        excerpt: externalSource,
+      }),
+    ]);
+  });
+
+  it("does not mistake a prohibition on another value for semantic equivalence", () => {
+    const artifacts = focusedActionArtifacts({
+      permitSource: "A verified account may be closed online.",
+      externalSource: "Premium accounts cannot be closed online.",
+      actionLabel: "Close account",
+      actionDescription: "Close the user's verified account online.",
+      appliesWhen: { kind: "fact", fact: "account.verified", op: "eq", value: true },
+      extraDefinitions: [
+        { key: "account.verified", label: "Account is verified", type: "boolean", sensitive: false },
+        {
+          key: "account.type", label: "Account type", type: "string",
+          allowedValues: ["basic", "premium"], sensitive: false,
+        },
+      ],
+      extraRules: [{
+        id: "rule_basic_close_prohibition",
+        actionId: "proc_cancel01",
+        effect: "prohibit",
+        appliesWhen: { kind: "fact", fact: "account.type", op: "eq", value: "basic" },
+        citations: [{
+          pageId: "page_policy001",
+          pageUrl: "https://northstar.test/help/transfers",
+          blockId: "block_support01",
+          excerpt: "If a transfer cannot be canceled, contact support for available options.",
+          actionIds: [],
+        }],
+        semanticConfidence: 0.9,
+        needsReview: false,
+      }],
+    });
+
+    expect(findingsFor(artifacts, "rule_cancelpermit1")).toContainEqual(
+      expect.objectContaining({ code: "UNMODELED_EXCEPTION", blockId: "block_instant01" }),
+    );
+  });
+
+  it("keeps genuine eligibility hedging unresolved", () => {
+    const source = "A completed transfer may be eligible for recovery in some cases.";
+    const artifacts = recoveryArtifacts(source, {
+      kind: "fact", fact: "payment.status", op: "eq", value: "completed",
+    });
+
+    expect(findingsFor(artifacts, "rule_recoverok01")).toContainEqual(
+      expect.objectContaining({ code: "AMBIGUOUS_PERMISSION_SCOPE" }),
+    );
+  });
+
+  it("returns identical findings and ordering for identical inputs", () => {
+    const bundle = RecordedExtractionBundleSchema.parse(recordedSonnetBundleInput);
+    const first = auditSemanticQualifiers(bundle.sourceSnapshot, bundle.procedureModel);
+    const second = auditSemanticQualifiers(bundle.sourceSnapshot, bundle.procedureModel);
+
+    expect(second).toEqual(first);
+  });
+
+  it("detects a missing prerequisite in the permit-application domain", () => {
+    const artifacts = focusedActionArtifacts({
+      permitSource: "Permit applications may be submitted online.",
+      externalSource: "Permit applications for protected land cannot be submitted without zoning approval.",
+      actionLabel: "Submit permit application",
+      actionDescription: "Submit the permit application online.",
+      appliesWhen: { kind: "always" },
+    });
+
+    expect(findingsFor(artifacts, "rule_cancelpermit1")).toContainEqual(
+      expect.objectContaining({ code: "UNMODELED_EXCEPTION", blockId: "block_instant01" }),
+    );
+  });
+
+  it("recognizes a semantically equivalent prerequisite cited by another block", () => {
+    const base = focusedActionArtifacts({
+      permitSource: "Permit applications may be submitted online.",
+      externalSource: "Permit applications for protected land cannot be submitted without zoning approval.",
+      actionLabel: "Submit permit application",
+      actionDescription: "Submit the permit application online.",
+      appliesWhen: { kind: "always" },
+      extraRules: [{
+        id: "rule_zoning_approval_required",
+        actionId: "proc_cancel01",
+        effect: "require_action",
+        appliesWhen: { kind: "always" },
+        requiredActionId: "proc_support1",
+        citations: [{
+          pageId: "page_policy001",
+          pageUrl: "https://northstar.test/help/transfers",
+          blockId: "block_support01",
+          excerpt: "If a transfer cannot be canceled, contact support for available options.",
+          actionIds: [],
+        }],
+        semanticConfidence: 0.9,
+        needsReview: false,
+      }],
+    });
+    const model = replaceActionDescription(
+      base.model,
+      "proc_support1",
+      "Obtain zoning approval",
+      "Obtain the required zoning approval before submitting the application.",
+    );
+
+    expect(findingsFor({ snapshot: base.snapshot, model }, "rule_cancelpermit1")).toEqual([]);
   });
 
   it("keeps the preserved canonical extraction fixture compatible", () => {
