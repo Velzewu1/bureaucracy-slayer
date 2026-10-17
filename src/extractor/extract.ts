@@ -21,12 +21,15 @@ import {
   validateFocusedSourceCatalogBindings,
   type FocusedSourceCatalog,
 } from "./source-selection.js";
+
 import {
   analyzePolicyExtraction,
   convertStagedExtraction,
   validateProcedureMapping,
   type PolicyExtractionDTO,
 } from "./staged.js";
+
+import { auditSemanticQualifiers } from "./semantic-audit.js";
 import type {
   ClaudeMessageRequest,
   ExtractProcedureOptions,
@@ -192,7 +195,15 @@ async function runProcedureMapping(
     ruleIds: procedureResult.model.rules.map((rule) => rule.id),
   });
 
-  const validation = validateEvidence(snapshot, procedureResult.model, evidenceContext);
+  const semanticAudit = auditSemanticQualifiers(snapshot, procedureResult.model);
+
+  const validation = validateEvidence(
+    snapshot,
+    procedureResult.model,
+    evidenceContext,
+    semanticAudit.findings,
+  );
+
   if (!validation.ok) {
     emitDebugEvent(options, { kind: "evidence_validation_failure", issues: validation.issues });
     return failure(
