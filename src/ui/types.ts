@@ -54,6 +54,8 @@ export type AnalysisRunOptions = Readonly<{
   onProgress?: (progress: AnalysisProgress) => void;
 }>;
 
+export type LiveResumeState = "none" | "request" | "job";
+
 export type DemoAnalysis = Readonly<{
   sessionId: string;
   mode: DemoMode;
@@ -83,4 +85,5 @@ export interface DemoDataProvider {
   getEvidence(sessionId: string): Promise<EvidenceResult>;
   stop?(reason: LiveExtractionClientStopReason): void;
   canResume?(): boolean;
+  resumeState?(): LiveResumeState;
 }

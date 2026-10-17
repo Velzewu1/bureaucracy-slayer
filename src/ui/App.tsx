@@ -29,6 +29,8 @@ import {
   beginModeAnalysis,
   createModeWorkspaceState,
   failModeAnalysis,
+  failModeReplan,
+  stopLiveModeForNavigation,
 } from "./modeState.js";
 import type {
   DemoDataProvider,
@@ -44,6 +46,7 @@ const recordedProvider = new RecordedExtractionProvider({ latencyMs: 650 });
 const liveProvider = new LiveExtractionProvider();
 
 type AppProps = Readonly<{
+  initialMode?: DemoMode;
   provider?: DemoDataProvider;
   providers?: Partial<Readonly<Record<DemoMode, DemoDataProvider>>>;
 }>;
@@ -112,12 +115,13 @@ const livePhaseCopy: Readonly<
   },
 };
 
-export function App({ provider, providers }: AppProps) {
-  const [workspace, setWorkspace] = useState(() => createModeWorkspaceState("verified_fixture"));
+export function App({ initialMode = "verified_fixture", provider, providers }: AppProps) {
+  const [workspace, setWorkspace] = useState(() => createModeWorkspaceState(initialMode));
   const [activity, setActivity] = useState<"analyzing" | "replanning" | null>(null);
   const [liveProgress, setLiveProgress] = useState<LiveExtractionPhase | null>(null);
   const runIdRef = useRef(0);
   const busyRef = useRef(false);
+  const navigationInterruptedRef = useRef(false);
   const isBusy = activity !== null;
   const activeProvider: DemoDataProvider =
     providers?.[workspace.mode] ??
@@ -130,8 +134,13 @@ export function App({ provider, providers }: AppProps) {
   const activeModeRef = useRef(workspace.mode);
   activeProviderRef.current = activeProvider;
   activeModeRef.current = workspace.mode;
-  const canResumeLive =
-    workspace.mode === "live_sonnet" && activeProvider.canResume?.() === true;
+  const liveResumeState =
+    workspace.mode === "live_sonnet"
+      ? activeProvider.resumeState?.() ??
+        (activeProvider.canResume?.() === true ? "job" : "none")
+      : "none";
+  const canResumeLive = liveResumeState === "job";
+  const canRetryAmbiguousLive = liveResumeState === "request";
 
   const model =
     workspace.analysis?.model ??
@@ -147,13 +156,38 @@ export function App({ provider, providers }: AppProps) {
   useEffect(() => {
     function stopForNavigation(): void {
       if (activeModeRef.current !== "live_sonnet") return;
+      const shouldStop =
+        busyRef.current || activeProviderRef.current.canResume?.() === true;
+      if (!shouldStop) return;
+      navigationInterruptedRef.current = true;
       runIdRef.current += 1;
       busyRef.current = false;
       activeProviderRef.current.stop?.("navigation");
+      setActivity(null);
+      setLiveProgress(null);
+      setWorkspace(stopLiveModeForNavigation);
+    }
+    function reconcileAfterNavigation(event: PageTransitionEvent): void {
+      if (
+        !event.persisted ||
+        !navigationInterruptedRef.current ||
+        activeModeRef.current !== "live_sonnet"
+      ) {
+        return;
+      }
+      navigationInterruptedRef.current = false;
+      runIdRef.current += 1;
+      busyRef.current = false;
+      activeProviderRef.current.stop?.("navigation");
+      setActivity(null);
+      setLiveProgress(null);
+      setWorkspace(stopLiveModeForNavigation);
     }
     window.addEventListener("pagehide", stopForNavigation);
+    window.addEventListener("pageshow", reconcileAfterNavigation);
     return () => {
       window.removeEventListener("pagehide", stopForNavigation);
+      window.removeEventListener("pageshow", reconcileAfterNavigation);
       runIdRef.current += 1;
       busyRef.current = false;
       if (activeModeRef.current === "live_sonnet") {
@@ -280,12 +314,9 @@ export function App({ provider, providers }: AppProps) {
       );
     } catch (caught) {
       if (runIdRef.current !== runId) return;
-      setWorkspace((current) => ({
-        ...current,
-        error: errorMessage(caught),
-        errorKind:
-          startedMode === "live_sonnet" ? liveErrorKind(caught) : "analysis",
-      }));
+      setWorkspace((current) =>
+        failModeReplan(current, startedMode, errorMessage(caught)),
+      );
     } finally {
       if (runIdRef.current === runId) {
         busyRef.current = false;
@@ -334,7 +365,9 @@ export function App({ provider, providers }: AppProps) {
           workspace.mode === "live_sonnet"
             ? canResumeLive
               ? "Resume live extraction"
-              : "Start live extraction"
+              : canRetryAmbiguousLive
+                ? "Retry live extraction"
+                : "Start live extraction"
             : "Analyze website"
         }
         reanalyzeLabel={workspace.mode === "live_sonnet" ? "Start new extraction" : "Analyze again"}
@@ -382,7 +415,9 @@ export function App({ provider, providers }: AppProps) {
                 : workspace.analysis === null
                   ? canResumeLive
                     ? "The backend job is retained. Resume polling without starting another paid extraction; stopping locally did not cancel backend work."
-                    : "This mode collects the controlled portal and runs both Sonnet extraction stages now. Returned artifacts are independently verified in the browser."
+                    : canRetryAmbiguousLive
+                      ? "Retry the same idempotent start request. The backend may already have accepted it, so the request ID is reused to prevent duplicate paid work."
+                      : "This mode collects the controlled portal and runs both Sonnet extraction stages now. Returned artifacts are independently verified in the browser."
                   : "The live result passed local hash, semantic-audit, and evidence-validation checks. Fact changes now re-evaluate locally without another Sonnet call."
               : workspace.mode === "recorded_sonnet"
               ? workspace.analysis?.plan.status === "review_required" && workspace.analysis.evidence.issues.some((issue) => issue.code === "SEMANTIC_REVIEW_REQUIRED")
@@ -414,11 +449,13 @@ export function App({ provider, providers }: AppProps) {
           <div className="error-banner" role="alert">
             <strong>
               {workspace.errorKind === "live_stopped"
-                ? "Live polling stopped locally"
+                ? "Live browser activity stopped locally"
                 : workspace.errorKind === "live_integrity"
                   ? "Live result rejected"
                   : workspace.errorKind === "live_operational"
                     ? "Live extraction failed operationally"
+                    : workspace.errorKind === "replan"
+                      ? "Local replan failed"
                     : "Analysis stopped"}
             </strong>
             <span>{workspace.error}</span>
@@ -460,19 +497,25 @@ export function App({ provider, providers }: AppProps) {
                     ? "Live extraction running now"
                     : canResumeLive
                       ? "Live polling paused"
-                      : "Live-only session"}
+                      : canRetryAmbiguousLive
+                        ? "Live start retry available"
+                        : "Live-only session"}
                 </span>
                 <strong>
                   {workspace.analysis?.source.modelName ??
                     (canResumeLive
                       ? "Backend job retained"
-                      : "Facts unlock after verified extraction")}
+                      : canRetryAmbiguousLive
+                        ? "Idempotent request retained"
+                        : "Facts unlock after verified extraction")}
                 </strong>
                 <p>
                   {workspace.analysis === null
                     ? canResumeLive
                       ? "Resume the retained job without another POST. The browser has not claimed or requested backend cancellation."
-                      : "This session starts with no inherited facts or result. Stopping or leaving only stops browser polling; it does not cancel backend work."
+                      : canRetryAmbiguousLive
+                        ? "Retry with the same request ID. A repeated POST remains idempotent and must not create duplicate paid work."
+                        : "This session starts with no inherited facts or result. Stopping or leaving only stops browser polling; it does not cancel backend work."
                     : `Completed ${new Date(workspace.analysis.source.recordedAt ?? "").toLocaleString()}. Further fact changes use only the deterministic local engine.`}
                 </p>
               </div>
@@ -529,7 +572,9 @@ export function App({ provider, providers }: AppProps) {
                   {workspace.mode === "live_sonnet"
                     ? canResumeLive
                       ? "Resume live extraction"
-                      : "Start live extraction"
+                      : canRetryAmbiguousLive
+                        ? "Retry live extraction"
+                        : "Start live extraction"
                     : "Analyze website"}
                 </button>
               </section>

@@ -21,7 +21,13 @@ export type ModeWorkspaceState = Readonly<{
   originalAnalysis: DemoAnalysis | null;
   isDirty: boolean;
   error: string | null;
-  errorKind: "analysis" | "live_operational" | "live_integrity" | "live_stopped" | null;
+  errorKind:
+    | "analysis"
+    | "replan"
+    | "live_operational"
+    | "live_integrity"
+    | "live_stopped"
+    | null;
 }>;
 
 function fixtureDefaultState(): UserState {
@@ -112,5 +118,44 @@ export function failModeAnalysis(
       : {}),
     error: message,
     errorKind,
+  };
+}
+
+export function failModeReplan(
+  current: ModeWorkspaceState,
+  expectedMode: DemoMode,
+  message: string,
+): ModeWorkspaceState {
+  if (current.mode !== expectedMode) return current;
+  const analysis = current.analysis;
+  return {
+    ...current,
+    ...(analysis === null
+      ? {}
+      : {
+          userState: copyUserState(analysis.userState),
+          isDirty: false,
+        }),
+    error: message,
+    errorKind: "replan",
+  };
+}
+
+export function stopLiveModeForNavigation(
+  current: ModeWorkspaceState,
+): ModeWorkspaceState {
+  if (current.mode !== "live_sonnet") return current;
+  const analysis = current.analysis;
+  return {
+    ...current,
+    ...(analysis === null
+      ? { analysis: null, originalAnalysis: null, isDirty: false }
+      : {
+          userState: copyUserState(analysis.userState),
+          isDirty: false,
+        }),
+    error:
+      "Live browser activity stopped for navigation. Backend extraction, if running, was not cancelled.",
+    errorKind: "live_stopped",
   };
 }

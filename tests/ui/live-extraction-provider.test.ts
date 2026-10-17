@@ -9,6 +9,7 @@ import { validateEvidence } from "../../src/evidence/index.js";
 import { auditSemanticQualifiers } from "../../src/extractor/semantic-audit.js";
 import {
   LiveExtractionArtifactSchema,
+  LiveExtractionStartRequestSchema,
   type LiveExtractionArtifact,
 } from "../../src/orchestration/live-extraction-contract.js";
 import {
@@ -416,6 +417,92 @@ describe("LiveExtractionProvider", () => {
     );
   });
 
+  it("fails closed for every browser-side artifact-integrity boundary", () => {
+    const cases: readonly Readonly<{
+      name: string;
+      code:
+        | "ARTIFACT_SCHEMA_INVALID"
+        | "BLOCK_HASH_MISMATCH"
+        | "ACTION_FINGERPRINT_MISMATCH"
+        | "PAGE_HASH_MISMATCH"
+        | "SEMANTIC_AUDIT_MISMATCH";
+      mutate: (artifact: LiveExtractionArtifact) => unknown;
+    }>[] = [
+      {
+        name: "evidence block hash",
+        code: "BLOCK_HASH_MISMATCH",
+        mutate: (artifact) => {
+          const block = artifact.sourceSnapshot.pages[0]?.blocks[0];
+          if (block === undefined) throw new Error("Test block is unavailable");
+          block.textHash = "0".repeat(64);
+          return artifact;
+        },
+      },
+      {
+        name: "website action fingerprint",
+        code: "ACTION_FINGERPRINT_MISMATCH",
+        mutate: (artifact) => {
+          const action = artifact.sourceSnapshot.pages[0]?.actions[0];
+          if (action === undefined) throw new Error("Test action is unavailable");
+          action.fingerprint = "0".repeat(64);
+          return artifact;
+        },
+      },
+      {
+        name: "page content hash",
+        code: "PAGE_HASH_MISMATCH",
+        mutate: (artifact) => {
+          const page = artifact.sourceSnapshot.pages[0];
+          if (page === undefined) throw new Error("Test page is unavailable");
+          page.contentHash = "0".repeat(64);
+          return artifact;
+        },
+      },
+      {
+        name: "model snapshot binding",
+        code: "ARTIFACT_SCHEMA_INVALID",
+        mutate: (artifact) => {
+          artifact.procedureModel.sourceSnapshotId = "snapshot_other01";
+          return artifact;
+        },
+      },
+      {
+        name: "semantic audit",
+        code: "SEMANTIC_AUDIT_MISMATCH",
+        mutate: (artifact) => {
+          const rule = artifact.procedureModel.rules[0];
+          const citation = rule?.citations[0];
+          if (rule === undefined || citation === undefined) {
+            throw new Error("Test citation is unavailable");
+          }
+          artifact.semanticAudit.findings.push({
+            ruleId: rule.id,
+            code: "QUALIFIER_UNCERTAIN",
+            message: "Injected audit mismatch.",
+            pageId: citation.pageId,
+            blockId: citation.blockId,
+            excerpt: citation.excerpt,
+          });
+          artifact.semanticAudit.reviewRequiredRuleIds = [rule.id];
+          return artifact;
+        },
+      },
+      {
+        name: "strict unknown field",
+        code: "ARTIFACT_SCHEMA_INVALID",
+        mutate: (artifact) => ({ ...artifact, unexpected: true }),
+      },
+    ];
+
+    for (const testCase of cases) {
+      const input = testCase.mutate(structuredClone(demoLiveArtifact()));
+      expect(
+        () => verifyLiveExtractionArtifact(input),
+        testCase.name,
+      ).toThrowError(expect.objectContaining({ code: testCase.code }));
+    }
+  });
+
   it("preserves semantic review as a successful extraction outcome", async () => {
     const { provider } = providerFor([
       { body: startResponse(), status: 202 },
@@ -490,6 +577,7 @@ describe("LiveExtractionProvider", () => {
     await expect(contention.analyze(request())).rejects.toMatchObject({
       code: "JOB_ALREADY_RUNNING",
     });
+    expect(contention.resumeState()).toBe("none");
 
     const portal = providerFor([
       { body: startResponse(), status: 202 },
@@ -502,6 +590,7 @@ describe("LiveExtractionProvider", () => {
       code: "PORTAL_UNAVAILABLE",
     });
     expect(failurePhases.at(-1)).toBe("failed");
+    expect(portal.resumeState()).toBe("none");
 
     const transport = new LiveExtractionProvider({
       fetch: async () => {
@@ -512,6 +601,27 @@ describe("LiveExtractionProvider", () => {
     await expect(transport.analyze(request())).rejects.toMatchObject({
       code: "TRANSPORT_ERROR",
     });
+    expect(transport.resumeState()).toBe("request");
+
+    const ambiguousInternal = providerFor([
+      {
+        status: 500,
+        body: {
+          schemaVersion: 1,
+          error: {
+            code: "INTERNAL_ERROR",
+            stage: "internal",
+            message: "The server could not publish the extraction state.",
+            retryable: true,
+            issueCodes: [],
+          },
+        },
+      },
+    ]).provider;
+    await expect(ambiguousInternal.analyze(request())).rejects.toMatchObject({
+      code: "INTERNAL_ERROR",
+    });
+    expect(ambiguousInternal.resumeState()).toBe("request");
 
     const malformedJson = new LiveExtractionProvider({
       fetch: async () => new Response("{", { status: 202 }),
@@ -520,6 +630,59 @@ describe("LiveExtractionProvider", () => {
     await expect(malformedJson.analyze(request())).rejects.toMatchObject({
       code: "MALFORMED_RESPONSE",
     });
+  });
+
+  it("uses a new request ID after a definitive start rejection", async () => {
+    const nextRequestId = "request_cccccccccccccccccccccccccccccccc" as const;
+    const responses = [
+      jsonResponse({
+        schemaVersion: 1,
+        error: {
+          code: "JOB_ALREADY_RUNNING",
+          stage: "job",
+          message: "Another extraction is already running.",
+          retryable: true,
+          issueCodes: [],
+        },
+      }, 409),
+      jsonResponse(startResponse(), 202),
+      jsonResponse({ ...succeeded(demoLiveArtifact()), requestId: nextRequestId }),
+    ];
+    const fetch = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
+        const response = responses.shift();
+        if (response === undefined) throw new Error("Unexpected test fetch");
+        return response;
+      },
+    );
+    const requestIds = [requestId, nextRequestId];
+    const provider = new LiveExtractionProvider({
+      fetch,
+      generateRequestId: () => {
+        const next = requestIds.shift();
+        if (next === undefined) throw new Error("Unexpected request ID generation");
+        return next;
+      },
+      now: fixedNow,
+      wait: async () => {},
+    });
+
+    await expect(provider.analyze(request())).rejects.toMatchObject({
+      code: "JOB_ALREADY_RUNNING",
+    });
+    await expect(provider.analyze(request())).resolves.toMatchObject({
+      mode: "live_sonnet",
+    });
+    const postedRequestIds = fetch.mock.calls
+      .filter(([, init]) => init?.method === "POST")
+      .map(([, init]) => {
+        if (typeof init?.body !== "string") throw new Error("POST body is unavailable");
+        return LiveExtractionStartRequestSchema.parse(JSON.parse(init.body));
+      });
+    expect(postedRequestIds).toEqual([
+      expect.objectContaining({ requestId }),
+      expect.objectContaining({ requestId: nextRequestId }),
+    ]);
   });
 
   it("clears a previous Live ready plan when a newer extraction fails", async () => {
@@ -571,6 +734,7 @@ describe("LiveExtractionProvider", () => {
       code: "JOB_EXPIRED",
     });
     expect(provider.canResume()).toBe(false);
+    expect(provider.resumeState()).toBe("none");
     await expect(provider.analyze(request())).resolves.toMatchObject({
       mode: "live_sonnet",
     });
@@ -604,6 +768,7 @@ describe("LiveExtractionProvider", () => {
     provider.stop("mode_changed");
     const resumed = provider.analyze(request());
     expect(provider.canResume()).toBe(true);
+    expect(provider.resumeState()).toBe("job");
     expect(fetch).toHaveBeenCalledTimes(2);
     releaseStalePoll?.(jsonResponse(succeeded(demoLiveArtifact())));
 

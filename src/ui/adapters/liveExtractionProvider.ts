@@ -25,6 +25,7 @@ import type {
   DemoAnalysis,
   DemoDataProvider,
   LiveExtractionPhase,
+  LiveResumeState,
 } from "../types.js";
 import {
   recordedExtractionBundle,
@@ -84,6 +85,7 @@ export type LiveExtractionProviderOptions = Readonly<{
 
 type ActiveRequest = {
   requestId: LiveExtractionRequestId;
+  requestState: "pending" | "ambiguous";
   jobId?: string;
   statusUrl?: string;
 };
@@ -165,6 +167,21 @@ function operationalError(input: unknown): LiveExtractionClientError | undefined
   );
 }
 
+function isDefinitiveStartRejection(
+  code: LiveExtractionClientErrorCode,
+): boolean {
+  switch (code) {
+    case "REQUEST_INVALID":
+    case "REQUEST_TOO_LARGE":
+    case "UNSUPPORTED_ACTION":
+    case "UNSUPPORTED_MEDIA_TYPE":
+    case "JOB_ALREADY_RUNNING":
+      return true;
+    default:
+      return false;
+  }
+}
+
 function phaseForStatus(status: LiveExtractionJobStatus): LiveExtractionPhase {
   switch (status.state) {
     case "queued":
@@ -233,6 +250,7 @@ export class LiveExtractionProvider implements DemoDataProvider {
       action: "start_live_extraction",
       requestId: active.requestId,
     });
+    active.requestState = "pending";
     let response: Response;
     try {
       response = await this.#fetch(LIVE_EXTRACTION_START_ROUTE, {
@@ -243,6 +261,7 @@ export class LiveExtractionProvider implements DemoDataProvider {
       });
     } catch (error) {
       if (isAbortError(error)) throw error;
+      active.requestState = "ambiguous";
       throw new LiveExtractionClientError(
         "TRANSPORT_ERROR",
         "The live extraction API could not be reached. Check that the local server is running.",
@@ -253,6 +272,7 @@ export class LiveExtractionProvider implements DemoDataProvider {
     signal.throwIfAborted();
     const parsed = LiveExtractionStartResponseSchema.safeParse(body);
     if (!parsed.success) {
+      active.requestState = "ambiguous";
       throw new LiveExtractionClientError(
         "MALFORMED_RESPONSE",
         "The live extraction start response did not match the frozen API contract.",
@@ -376,7 +396,10 @@ export class LiveExtractionProvider implements DemoDataProvider {
 
     const active =
       this.#activeRequest ??
-      { requestId: this.#generateRequestId() };
+      {
+        requestId: this.#generateRequestId(),
+        requestState: "pending",
+      };
     this.#activeRequest = active;
     this.#emit(options, "queued");
 
@@ -433,6 +456,17 @@ export class LiveExtractionProvider implements DemoDataProvider {
         this.#activeRequest = undefined;
       }
       if (
+        error instanceof LiveExtractionClientError &&
+        active.jobId === undefined &&
+        this.#activeRequest === active
+      ) {
+        if (isDefinitiveStartRejection(error.code)) {
+          this.#activeRequest = undefined;
+        } else {
+          active.requestState = "ambiguous";
+        }
+      }
+      if (
         error instanceof LiveExtractionClientError ||
         error instanceof LiveArtifactIntegrityError
       ) {
@@ -476,14 +510,23 @@ export class LiveExtractionProvider implements DemoDataProvider {
     const operation = this.#operation;
     if (operation === undefined) return;
     operation.stopReason = reason;
+    const active = this.#activeRequest;
+    if (active !== undefined && active.jobId === undefined) {
+      active.requestState = "ambiguous";
+    }
     operation.controller.abort();
   }
 
   canResume(): boolean {
-    return (
-      this.#activeRequest?.jobId !== undefined &&
+    return this.resumeState() === "job";
+  }
+
+  resumeState(): LiveResumeState {
+    if (this.#activeRequest === undefined) return "none";
+    return this.#activeRequest.jobId !== undefined &&
       this.#activeRequest.statusUrl !== undefined
-    );
+      ? "job"
+      : "request";
   }
 
   async replan(sessionId: string, userState: UserState): Promise<DemoAnalysis> {
