@@ -180,9 +180,33 @@ describe("bounded Playwright collection", () => {
       response.end();
     });
 
-    await expect(collectWebsite({ startUrl: local.origin })).rejects.toMatchObject({
+    await expect(collectWebsite({ startUrl: local.origin, navigationRetries: 1 })).rejects.toMatchObject({
       code: "REDIRECT_DISALLOWED",
     });
+    expect(local.requests).toEqual(["GET /"]);
+    expect(external.requests).toEqual([]);
+  });
+
+  it("blocks an external destination after following only the allowed portion of a redirect chain", async () => {
+    const external = await startServer((_request, response) => {
+      html(response, "<main><p>External destination</p></main>");
+    });
+    const local = await startServer((request, response, origin) => {
+      if (request.url === "/second") {
+        response.writeHead(302, { location: `${external.origin}/outside` });
+        response.end();
+        return;
+      }
+      response.writeHead(302, { location: `${origin}/second` });
+      response.end();
+    });
+
+    await expect(
+      collectWebsite({ startUrl: `${local.origin}/first`, navigationRetries: 1 }),
+    ).rejects.toMatchObject({
+      code: "REDIRECT_DISALLOWED",
+    });
+    expect(local.requests).toEqual(["GET /first", "GET /second"]);
     expect(external.requests).toEqual([]);
   });
 
@@ -216,10 +240,10 @@ describe("bounded Playwright collection", () => {
       );
     });
 
-    await expect(collectWebsite({ startUrl: local.origin })).rejects.toMatchObject({
+    await expect(collectWebsite({ startUrl: local.origin, navigationRetries: 1 })).rejects.toMatchObject({
       code: "UNSAFE_REQUEST_BLOCKED",
     });
-    expect(local.requests).not.toContain("POST /mutate");
+    expect(local.requests).toEqual(["GET /"]);
   });
 });
 
