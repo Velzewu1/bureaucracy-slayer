@@ -317,6 +317,44 @@ describe("Claude procedure extraction", () => {
     );
   });
 
+  it("fails closed when a fake Stage 1 response omits a mandatory eligibility qualifier", async () => {
+    const omittedQualifierModel = {
+      ...baseProcedureModelFixture,
+      id: "procedure_omitqual1",
+      rules: baseProcedureModelFixture.rules.map((rule) =>
+        rule.id === "rule_cancelpermit1"
+          ? {
+              ...rule,
+              appliesWhen: {
+                kind: "fact" as const,
+                fact: "payment.status",
+                op: "eq" as const,
+                value: "scheduled",
+              },
+            }
+          : rule,
+      ),
+    };
+
+    const outcome = await extractProcedure(
+      baseSnapshotFixture,
+      USER_GOAL,
+      extractionOptions(transportReturningModel(omittedQualifierModel)),
+    );
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.status).toBe("review_required");
+    expect(outcome.evidence.rejectedRuleIds).toContain("rule_cancelpermit1");
+    expect(outcome.evidence.issues).toContainEqual(
+      expect.objectContaining({
+        code: "SEMANTIC_REVIEW_REQUIRED",
+        ruleId: "rule_cancelpermit1",
+        message: expect.stringContaining("before process"),
+      }),
+    );
+  });
+
   it("preserves explicit prohibitions without deciding their policy outcome", async () => {
     const outcome = await extractProcedure(
       baseSnapshotFixture,
