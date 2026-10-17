@@ -21,7 +21,7 @@ Use the structure defined in `ARCHITECTURE.md`:
 - `src/contracts/`: Zod schemas, inferred types, and legacy-compatible generic normalization/hashing. Owns shared data shapes.
 - `src/shared/`: pure, versioned hash recipes shared by collector and evidence validation; owns no policy meaning.
 - `src/collector/`: Playwright observation, text normalization, stable snapshot IDs. Owns no policy meaning.
-- `src/extraction/`: Claude prompt and structured-output parsing. This is the only probabilistic interpretation boundary.
+- `src/extractor/`: Claude prompts, two-stage structured-output parsing, and canonical conversion. This is the only probabilistic interpretation boundary.
 - `src/evidence/`: citation, action, reference, allowlist, graph, and hash validation.
 - `src/engine/`: pure condition evaluation, policy evaluation, and planning. No I/O, browser, React, HTTP, or model SDK imports.
 - `src/decision/`: pure inspection of engine results plus bounded deterministic what-if evaluation; owns no policy semantics.
@@ -136,7 +136,7 @@ npm test                    # offline Vitest unit/integration suite
 npm run demo                # run the valid fixture-driven CLI scenario
 ```
 
-`npm run dev`, `npm run test:e2e`, `npm run test:live-extract`, and `npm run lint` remain proposed for later phases and are not yet package scripts. Do not claim a proposed command works until it exists and has been run successfully. Use npm unless a documented architecture decision changes the package manager; do not add monorepo tooling.
+`npm run test:live-extract` exists as an explicit opt-in live command and must never be part of default/offline verification. `npm run dev`, `npm run test:e2e`, and `npm run lint` remain proposed for later phases and are not yet package scripts. Do not claim a proposed command works until it exists and has been run successfully. Use npm unless a documented architecture decision changes the package manager; do not add monorepo tooling.
 
 ## Scope and dependency discipline
 

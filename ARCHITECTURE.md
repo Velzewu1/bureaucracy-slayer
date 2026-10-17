@@ -51,7 +51,7 @@ There are fewer than two days between this design and the submission deadline. O
 - One Node API process and one Vite/React browser UI in development.
 - JSON files and in-memory objects only. Demo runs may write explicitly named artifacts under `artifacts/`; no database.
 - One bounded collector configuration: same origin, allowlisted seed URLs, at most 12 pages, at most one retry per page.
-- One structured extraction request in P0. A bounded follow-up discovery pass is P2.
+- One bounded two-stage extraction pipeline in P0: policy extraction followed by procedure mapping. A bounded follow-up discovery pass is P2.
 - One mock portal workflow in P0. A second portability fixture is P1.
 - The deterministic engine is pure TypeScript and independently testable without Playwright, React, a network, or Claude.
 - Pin dependency versions when implementation starts; do not spend deadline time on infrastructure that does not exercise an acceptance criterion.
@@ -107,7 +107,7 @@ Claude can propose meaning, but cannot create trusted evidence, mark an action e
 | Concern | P0 choice | Why | Deliberately deferred | Reconsider when |
 |---|---|---|---|---|
 | Browser observation | Playwright for Node | It already provides navigation, DOM inspection, accessible roles, screenshots, and repeatable tests. It avoids extension packaging and browser permissions. | Custom browser extension and side panel. | The core engine works and the primary product requirement becomes operating inside users' authenticated browsing sessions. |
-| Semantic extraction | Anthropic TypeScript SDK, one Claude request using structured/tool output, then Zod parsing | Direct API usage makes the single probabilistic step explicit and inspectable. The browser is controlled by our adapter, not assumed Claude capabilities. | Browser-agent frameworks, autonomous tool loops, Claude-in-Chrome integration. | The bounded collector cannot locate relevant evidence and an evaluated framework provides traceable tool calls without weakening the trust boundary. |
+| Semantic extraction | Anthropic TypeScript SDK, two bounded structured-output stages, then deterministic conversion and Zod parsing | Separating policy extraction from procedure mapping keeps each model output smaller while preserving one explicit probabilistic pipeline. The browser is controlled by our adapter, not assumed Claude capabilities. | Browser-agent frameworks, autonomous tool loops, Claude-in-Chrome integration. | The bounded collector cannot locate relevant evidence and an evaluated framework provides traceable tool calls without weakening the trust boundary. |
 | Extraction strategy | One pass over a bounded `SiteSnapshot` | Easiest to cache, replay, test, and explain. It prevents an unbounded semantic crawler. | At most two model-directed discovery rounds behind configuration. | Tests show relevant evidence routinely lies beyond deterministic same-origin discovery and enough schedule remains to add bounded retries. |
 | Contracts | TypeScript strict mode plus Zod as the runtime source of truth; infer TypeScript types from schemas | External JSON, saved fixtures, browser observations, and model output all need runtime checks. | Code generation and schema registries. | Multiple services or languages consume the contracts. |
 | Policy storage | Plain JSON/in-memory `ProcedureModel` | Small, inspectable, portable, versionable, and sufficient for demo scale. | SQL, graph database, vector store. | Models no longer fit memory or require concurrent persistent editing/querying. |
@@ -278,7 +278,14 @@ never mutates the current `UserState` and performs no collection or extraction.
 4. If cited policy block hashes changed or vanished, invalidate the model and re-extract.
 5. Never present a plan whose bound hashes do not match current artifacts.
 
-### API surface (proposed)
+### API surface
+
+The P0 Live Sonnet UI uses the composed asynchronous job API defined in
+`docs/live-extraction-api.md`: `POST /api/live-extraction/jobs` starts an
+idempotent fixed-goal/fixed-portal job, and `GET /api/live-extraction/jobs/:jobId`
+polls its typed state. This is the implementation contract for the live mode;
+the split endpoints below remain possible internal/development adapters, not the
+browser-facing P0 contract.
 
 - `POST /api/collect` -> `SiteSnapshot` (development/demo control only)
 - `POST /api/extract` -> candidate `ProcedureModel` and `EvidenceResult`
@@ -703,7 +710,7 @@ The intended single-package structure is:
     contracts/                Zod schemas/types and legacy hash compatibility
     shared/                   canonical hash recipes reused by collector/evidence
     collector/                Playwright capture, normalization, stable IDs
-    extraction/               Claude prompt, structured call, output parsing
+    extractor/                Claude prompts, two structured stages, output parsing
     evidence/                 citation/action/reference validation
     engine/
       conditions.ts           three-valued condition evaluation
@@ -722,9 +729,9 @@ The intended single-package structure is:
   artifacts/                  ignored generated demo captures; sanitized only
 ```
 
-Dependency direction is inward: `ui/server -> orchestration|decision`; `orchestration -> collector|extraction|evidence|engine`; `decision -> engine`; and `collector|evidence -> shared -> contracts`, while `engine` imports only contracts and its own pure utilities. Collector and extraction must not import engine rules. The mock portal must never be imported by production modules.
+Dependency direction is inward: `ui/server -> orchestration|decision`; `orchestration -> collector|extractor|evidence|engine`; `decision -> engine`; and `collector|evidence -> shared -> contracts`, while `engine` imports only contracts and its own pure utilities. Collector and extractor must not import engine rules. The mock portal must never be imported by production modules.
 
-The canonical module roots are `src/contracts/`, `src/shared/`, `src/collector/`, `src/extraction/`, `src/evidence/`, `src/engine/`, `src/decision/`, `src/orchestration/`, `src/server/`, and `src/ui/`. Canonical test roots are `tests/unit/`, `tests/collector/`, `tests/fixtures/`, and `tests/e2e/`; the controlled site root is `mock-portal/`. All new collector-specific tests belong in `tests/collector/`, including pure hashing/normalization tests and Playwright tests against local deterministic pages. `tests/e2e/` is reserved for later cross-module vertical-slice tests. Do not split collector tests across `tests/unit/` and `tests/integration/`.
+The canonical module roots are `src/contracts/`, `src/shared/`, `src/collector/`, `src/extractor/`, `src/evidence/`, `src/engine/`, `src/decision/`, `src/orchestration/`, `src/server/`, and `src/ui/`. Canonical test roots are `tests/unit/`, `tests/collector/`, `tests/fixtures/`, and `tests/e2e/`; the controlled site root is `mock-portal/`. All new collector-specific tests belong in `tests/collector/`, including pure hashing/normalization tests and Playwright tests against local deterministic pages. `tests/e2e/` is reserved for later cross-module vertical-slice tests. Do not split collector tests across `tests/unit/` and `tests/integration/`.
 
 ## 15. Concrete test scenarios and expected outcomes
 
@@ -858,7 +865,7 @@ Each step should end green and demoable; do not begin P1 while a P0 acceptance c
 4. **Planner:** implement dependency validation, route expansion, deterministic ranking, stale binding, and plan tests.
 5. **Mock portal and collector:** create only the pages necessary for the three experiments; capture stable blocks/actions and test that observed IDs resolve.
 6. **Evidence validator:** exact quote, hash, reference, allowlist, availability, and graph checks; mutation tests.
-7. **Claude extraction adapter:** one prompt/structured call, Zod parse, one bounded retry at most, artifact caching. Compare output against acceptance fixtures; never make tests require the live API by default.
+7. **Claude extraction adapter:** one two-stage structured extraction pipeline, Zod parse at each boundary, bounded retry configuration, and artifact caching. Compare output against acceptance fixtures; never make tests require the live API by default.
 8. **Thin orchestration/API:** compose capture/extract/validate/evaluate/plan without embedding decisions.
 9. **React demo UI:** facts, statuses, ordered route, citations, caveats; demonstrate no-LLM replanning visibly.
 10. **Vertical-slice rehearsal:** run the three experiments, preserve sanitized fallback artifacts, fix only submission-threatening defects.
