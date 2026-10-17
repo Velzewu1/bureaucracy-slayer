@@ -1,0 +1,34 @@
+warning: in the working copy of '.gitignore', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'package-lock.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/extractor/anthropic.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/extractor/extract.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/extractor/index.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/extractor/output-schema.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/extractor/prompt.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/extractor/response.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/extractor/types.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/ui/README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/ui/fixtures/demoArtifacts.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/extractor/extractor.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/ui/fixture-demo-provider.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/ui/view-model.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tsconfig.json', LF will be replaced by CRLF the next time Git touches it
+ .gitignore                             |    3 [32m+[m
+ package-lock.json                      | 1578 [32m+++++++++++++++++++++[m[31m-----------[m
+ package.json                           |   20 [32m+[m[31m-[m
+ src/extractor/anthropic.ts             |  161 [32m+++[m[31m-[m
+ src/extractor/extract.ts               |  468 [32m+++++++++[m[31m-[m
+ src/extractor/index.ts                 |    4 [32m+[m
+ src/extractor/output-schema.ts         |  418 [32m+++++[m[31m----[m
+ src/extractor/prompt.ts                |   93 [32m+[m[31m-[m
+ src/extractor/response.ts              |  194 [32m+++[m[31m-[m
+ src/extractor/types.ts                 |  103 [32m++[m[31m-[m
+ src/ui/README.md                       |   28 [32m+[m[31m-[m
+ src/ui/fixtures/demoArtifacts.ts       |   11 [32m+[m[31m-[m
+ tests/collector/collect.test.ts        |    2 [32m+[m[31m-[m
+ tests/extractor/extractor.test.ts      |  329 [32m++++++[m[31m-[m
+ tests/ui/fixture-demo-provider.test.ts |   22 [32m+[m[31m-[m
+ tests/ui/view-model.test.ts            |    5 [32m+[m[31m-[m
+ tsconfig.json                          |    5 [32m+[m[31m-[m
+ 17 files changed, 2570 insertions(+), 874 deletions(-)

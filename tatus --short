@@ -1,0 +1,11 @@
+warning: in the working copy of '.gitignore', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'package-lock.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/extractor/anthropic.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/extractor/extract.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/extractor/index.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/extractor/output-schema.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/extractor/prompt.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/extractor/response.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/extractor/types.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/extractor/extractor.test.ts', LF will be replaced by CRLF the next time Git touches it

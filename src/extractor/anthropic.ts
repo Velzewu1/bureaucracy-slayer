@@ -1,24 +1,146 @@
 import type { ClaudeMessageRequest, ClaudeTransport } from "./types.js";
 
-type AnthropicConstructor = new (options: Readonly<{ apiKey: string }>) => unknown;
+type AnthropicConstructor = new (
+  options: Readonly<{
+    apiKey: string;
+    defaultHeaders?: Record<string, string>;
+  }>,
+) => unknown;
 type AnthropicClient = Readonly<{
   messages: Readonly<{
     create(request: ClaudeMessageRequest): Promise<unknown>;
   }>;
 }>;
 
-export class ClaudeTransportError extends Error {
-  readonly retryable: boolean;
+export type ClaudeTransportDiagnostic = Readonly<{
+  errorClass: string;
+  httpStatus: number | null;
+  anthropicErrorType: string | null;
+  anthropicErrorCode: string | null;
+  requestId: string | null;
+  message: string;
+  potentiallyRetryable: boolean;
+}>;
 
-  constructor(message: string, retryable: boolean, cause?: unknown) {
-    super(message, { cause });
-    this.name = "ClaudeTransportError";
-    this.retryable = retryable;
-  }
-}
+const MAX_DIAGNOSTIC_MESSAGE_LENGTH = 500;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return (typeof value === "object" && value !== null) || typeof value === "function";
+}
+
+function stringProperty(value: unknown, property: string): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const candidate = value[property];
+  return typeof candidate === "string" && candidate.length > 0 ? candidate : undefined;
+}
+
+function recordProperty(value: unknown, property: string): Readonly<Record<string, unknown>> | undefined {
+  if (!isRecord(value)) return undefined;
+  const candidate = value[property];
+  return isRecord(candidate) ? candidate : undefined;
+}
+
+function errorClass(error: unknown): string {
+  const declaredName = stringProperty(error, "name");
+  if (declaredName !== undefined && declaredName !== "Error") return declaredName;
+  if (isRecord(error)) {
+    const constructor = error["constructor"];
+    if (typeof constructor === "function" && constructor.name.length > 0) return constructor.name;
+  }
+  return declaredName ?? "UnknownError";
+}
+
+function sanitizeMessage(value: string, sensitiveValues: readonly string[]): string {
+  let sanitized = value.normalize("NFKC").replace(/\s+/gu, " ").trim();
+  for (const sensitiveValue of sensitiveValues) {
+    if (sensitiveValue.length > 0) sanitized = sanitized.split(sensitiveValue).join("[REDACTED]");
+  }
+  sanitized = sanitized
+    .replace(/\bsk-ant-[a-zA-Z0-9_-]+\b/gu, "[REDACTED]")
+    .replace(
+      /((?:authorization|x-api-key)["']?\s*[:=]\s*["']?)(?:bearer\s+)?[^"',\s}]+/giu,
+      "$1[REDACTED]",
+    );
+  const codePoints = [...sanitized];
+  return codePoints.length <= MAX_DIAGNOSTIC_MESSAGE_LENGTH
+    ? sanitized
+    : `${codePoints.slice(0, MAX_DIAGNOSTIC_MESSAGE_LENGTH).join("")}…`;
+}
+
+function safeIdentifier(value: string | undefined): string | null {
+  if (value === undefined) return null;
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  return normalized.length === 0 ? null : [...normalized].slice(0, 200).join("");
+}
+
+function safeMetadata(value: string | undefined, sensitiveValues: readonly string[]): string | null {
+  return value === undefined ? null : safeIdentifier(sanitizeMessage(value, sensitiveValues));
+}
+
+function diagnosticFromError(
+  error: unknown,
+  fallbackMessage: string,
+  sensitiveValues: readonly string[],
+  potentiallyRetryable: boolean,
+): ClaudeTransportDiagnostic {
+  const responseBody = recordProperty(error, "error");
+  const apiError = recordProperty(responseBody, "error");
+  const cause = recordProperty(error, "cause");
+  const primaryMessage = stringProperty(error, "message") ?? stringProperty(apiError, "message") ?? fallbackMessage;
+  const causeMessage = stringProperty(cause, "message");
+  const combinedMessage =
+    causeMessage === undefined || causeMessage === primaryMessage
+      ? primaryMessage
+      : `${primaryMessage} Cause: ${causeMessage}`;
+
+  return {
+    errorClass:
+      safeMetadata(
+        error === undefined ? "ClaudeTransportError" : errorClass(error),
+        sensitiveValues,
+      ) ?? "UnknownError",
+    httpStatus: statusFromError(error) ?? null,
+    anthropicErrorType: safeMetadata(
+      stringProperty(error, "type") ?? stringProperty(apiError, "type"),
+      sensitiveValues,
+    ),
+    anthropicErrorCode: safeMetadata(
+      stringProperty(error, "code") ?? stringProperty(apiError, "code") ?? stringProperty(cause, "code"),
+      sensitiveValues,
+    ),
+    requestId: safeMetadata(
+      stringProperty(error, "requestID") ??
+        stringProperty(error, "requestId") ??
+        stringProperty(error, "request_id") ??
+        stringProperty(responseBody, "request_id"),
+      sensitiveValues,
+    ),
+    message: sanitizeMessage(combinedMessage, sensitiveValues),
+    potentiallyRetryable,
+  };
+}
+
+export class ClaudeTransportError extends Error {
+  readonly retryable: boolean;
+  readonly diagnostic: ClaudeTransportDiagnostic;
+
+  constructor(
+    message: string,
+    retryable: boolean,
+    cause?: unknown,
+    sensitiveValues: readonly string[] = [],
+    potentiallyRetryable = retryable,
+  ) {
+    super(message, { cause });
+    this.name = "ClaudeTransportError";
+    this.retryable = retryable;
+    this.diagnostic = diagnosticFromError(
+      cause,
+      message,
+      sensitiveValues,
+      potentiallyRetryable,
+    );
+  }
 }
 
 function isAnthropicConstructor(value: unknown): value is AnthropicConstructor {
@@ -39,6 +161,15 @@ function statusFromError(error: unknown): number | undefined {
 
 function isTransientStatus(status: number | undefined): boolean {
   return status === 408 || status === 409 || status === 429 || (status !== undefined && status >= 500);
+}
+
+function isPotentiallyRetryable(error: unknown, status: number | undefined): boolean {
+  const className = errorClass(error);
+  return (
+    isTransientStatus(status) ||
+    className === "APIConnectionError" ||
+    className === "APIConnectionTimeoutError"
+  );
 }
 
 export type AnthropicTransportOptions = Readonly<{
@@ -69,7 +200,18 @@ export async function createAnthropicTransport(
 
   let client: unknown;
   try {
-    client = new sdkModule.default({ apiKey });
+    const workspaceId = environment["ANTHROPIC_WORKSPACE_ID"]?.trim();
+
+    client = new sdkModule.default({
+      apiKey,
+      ...(workspaceId
+        ? {
+            defaultHeaders: {
+              "anthropic-workspace-id": workspaceId,
+            },
+          }
+        : {}),
+    });
   } catch (error) {
     throw new ClaudeTransportError("The Anthropic SDK client could not be initialized.", false, error);
   }
@@ -82,10 +224,13 @@ export async function createAnthropicTransport(
       try {
         return await client.messages.create(request);
       } catch (error) {
+        const status = statusFromError(error);
         throw new ClaudeTransportError(
           "The Claude structured extraction request failed.",
-          isTransientStatus(statusFromError(error)),
+          isTransientStatus(status),
           error,
+          [apiKey],
+          isPotentiallyRetryable(error, status),
         );
       }
     },

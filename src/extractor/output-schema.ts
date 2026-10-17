@@ -1,177 +1,27 @@
 type JsonSchema = Readonly<Record<string, unknown>>;
 
-const idSchema = { type: "string", pattern: "^[a-z]+_[a-zA-Z0-9_-]{6,}$" } as const;
-const factKeySchema = { type: "string", pattern: "^[a-z][a-zA-Z0-9_.-]*$" } as const;
-const scalarSchema = {
-  oneOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }],
-} as const;
-
-const alwaysCondition = {
-  type: "object",
-  properties: { kind: { const: "always" } },
-  required: ["kind"],
-  additionalProperties: false,
-} as const;
-
-const factCondition = {
-  type: "object",
-  properties: {
-    kind: { const: "fact" },
-    fact: factKeySchema,
-    op: { enum: ["eq", "neq", "in", "not_in", "lt", "lte", "gt", "gte"] },
-    value: {
-      oneOf: [scalarSchema, { type: "array", items: scalarSchema, minItems: 1 }],
-    },
-  },
-  required: ["kind", "fact", "op", "value"],
-  additionalProperties: false,
-} as const;
-
-function conditionSchema(depth: number): JsonSchema {
-  const variants: unknown[] = [alwaysCondition, factCondition];
-  if (depth > 0) {
-    const childReference = { $ref: `#/$defs/condition${depth - 1}` };
-    variants.push(
-      {
-        type: "object",
-        properties: {
-          kind: { const: "all" },
-          conditions: { type: "array", items: childReference, minItems: 1 },
-        },
-        required: ["kind", "conditions"],
-        additionalProperties: false,
-      },
-      {
-        type: "object",
-        properties: {
-          kind: { const: "any" },
-          conditions: { type: "array", items: childReference, minItems: 1 },
-        },
-        required: ["kind", "conditions"],
-        additionalProperties: false,
-      },
-      {
-        type: "object",
-        properties: { kind: { const: "not" }, condition: childReference },
-        required: ["kind", "condition"],
-        additionalProperties: false,
-      },
-    );
-  }
-  return { oneOf: variants };
-}
-
-const citationSchema = {
-  type: "object",
-  properties: {
-    pageId: idSchema,
-    pageUrl: { type: "string", format: "uri" },
-    blockId: idSchema,
-    excerpt: { type: "string" },
-    actionIds: { type: "array", items: idSchema },
-  },
-  required: ["pageId", "pageUrl", "blockId", "excerpt", "actionIds"],
-  additionalProperties: false,
-} as const;
-
-const ruleBaseProperties = {
-  id: idSchema,
-  actionId: idSchema,
-  appliesWhen: { $ref: "#/$defs/condition4" },
-  citations: { type: "array", items: { $ref: "#/$defs/citation" }, minItems: 1 },
-  semanticConfidence: { type: "number" },
-  needsReview: { type: "boolean" },
-  reviewReason: { type: "string" },
-} as const;
-
-const ruleBaseRequired = [
-  "id",
-  "actionId",
-  "effect",
-  "appliesWhen",
-  "citations",
-  "semanticConfidence",
-  "needsReview",
-] as const;
-
-function ruleSchema(effect: "permit" | "prohibit" | "require_condition" | "require_action"): JsonSchema {
-  const effectProperties: Readonly<Record<string, unknown>> =
-    effect === "require_condition"
-      ? { requirement: { $ref: "#/$defs/condition4" } }
-      : effect === "require_action"
-        ? { requiredActionId: idSchema }
-        : {};
-  const effectRequired =
-    effect === "require_condition"
-      ? ["requirement"]
-      : effect === "require_action"
-        ? ["requiredActionId"]
-        : [];
-  return {
-    type: "object",
-    properties: { ...ruleBaseProperties, effect: { const: effect }, ...effectProperties },
-    required: [...ruleBaseRequired, ...effectRequired],
-    additionalProperties: false,
-  };
-}
-
-const browserActionSchema = {
-  type: "object",
-  properties: {
-    id: idSchema,
-    kind: { enum: ["navigate", "interact"] },
-    label: { type: "string" },
-    description: { type: "string" },
-    websiteActionId: idSchema,
-    prerequisiteActionIds: { type: "array", items: idSchema },
-    terminal: { type: "boolean" },
-  },
-  required: [
-    "id",
-    "kind",
-    "label",
-    "description",
-    "websiteActionId",
-    "prerequisiteActionIds",
-    "terminal",
-  ],
-  additionalProperties: false,
-} as const;
-
-const userTaskSchema = {
-  type: "object",
-  properties: {
-    id: idSchema,
-    kind: { const: "user_task" },
-    label: { type: "string" },
-    description: { type: "string" },
-    prerequisiteActionIds: { type: "array", items: idSchema },
-    terminal: { type: "boolean" },
-  },
-  required: ["id", "kind", "label", "description", "prerequisiteActionIds", "terminal"],
-  additionalProperties: false,
-} as const;
+const stringSchema = { type: "string" } as const;
+const stringArraySchema = { type: "array", items: stringSchema } as const;
 
 /**
- * Anthropic structured outputs do not support recursive JSON schemas. The API-facing
- * grammar therefore permits four compound condition levels; canonical Zod parsing
- * remains authoritative and can represent deeper saved/replayed models.
+ * API-facing extraction shape. It deliberately avoids unions and nested condition
+ * objects so Anthropic's constrained-output compiler receives a small grammar.
+ * Keep identifier constraints out of this grammar: the deterministic converter
+ * rejects empty, malformed, and cross-namespace references before canonical parsing.
  */
-export const PROCEDURE_MODEL_OUTPUT_SCHEMA: JsonSchema = {
+export const COMPACT_EXTRACTION_OUTPUT_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
     schemaVersion: { const: 1 },
-    id: idSchema,
-    sourceSnapshotId: idSchema,
-    sourceSnapshotHash: { type: "string" },
-    extractedAt: { type: "string", format: "date-time" },
-    goalSummary: { type: "string" },
-    factDefinitions: {
-      type: "array",
-      items: { $ref: "#/$defs/factDefinition" },
-    },
-    actions: { type: "array", items: { $ref: "#/$defs/procedureAction" }, minItems: 1 },
-    goalActionIds: { type: "array", items: idSchema, minItems: 1 },
+    id: stringSchema,
+    sourceSnapshotId: stringSchema,
+    sourceSnapshotHash: stringSchema,
+    extractedAt: stringSchema,
+    goalSummary: stringSchema,
+    factDefinitions: { type: "array", items: { $ref: "#/$defs/factDefinition" } },
+    actions: { type: "array", items: { $ref: "#/$defs/action" } },
+    goalActionIds: stringArraySchema,
+    conditionNodes: { type: "array", items: { $ref: "#/$defs/conditionNode" } },
     rules: { type: "array", items: { $ref: "#/$defs/rule" } },
   },
   required: [
@@ -184,37 +34,255 @@ export const PROCEDURE_MODEL_OUTPUT_SCHEMA: JsonSchema = {
     "factDefinitions",
     "actions",
     "goalActionIds",
+    "conditionNodes",
     "rules",
   ],
   additionalProperties: false,
   $defs: {
-    condition0: conditionSchema(0),
-    condition1: conditionSchema(1),
-    condition2: conditionSchema(2),
-    condition3: conditionSchema(3),
-    condition4: conditionSchema(4),
-    citation: citationSchema,
-    procedureAction: { oneOf: [browserActionSchema, userTaskSchema] },
     factDefinition: {
       type: "object",
       properties: {
-        key: factKeySchema,
-        label: { type: "string" },
+        key: stringSchema,
+        label: stringSchema,
         type: { enum: ["string", "number", "boolean"] },
-        allowedValues: { type: "array", items: scalarSchema, minItems: 1 },
+        allowedValuesJson: stringSchema,
         sensitive: { const: false },
       },
-      required: ["key", "label", "type", "sensitive"],
+      required: ["key", "label", "type", "allowedValuesJson", "sensitive"],
+      additionalProperties: false,
+    },
+    action: {
+      type: "object",
+      properties: {
+        id: stringSchema,
+        kind: { enum: ["navigate", "interact", "user_task"] },
+        label: stringSchema,
+        description: stringSchema,
+        websiteActionId: stringSchema,
+        prerequisiteActionIds: stringArraySchema,
+        terminal: { type: "boolean" },
+      },
+      required: [
+        "id",
+        "kind",
+        "label",
+        "description",
+        "websiteActionId",
+        "prerequisiteActionIds",
+        "terminal",
+      ],
+      additionalProperties: false,
+    },
+    conditionNode: {
+      type: "object",
+      properties: {
+        id: stringSchema,
+        kind: { enum: ["always", "fact", "all", "any", "not"] },
+        fact: stringSchema,
+        op: { enum: ["", "eq", "neq", "in", "not_in", "lt", "lte", "gt", "gte"] },
+        valueJson: stringSchema,
+        childIds: stringArraySchema,
+      },
+      required: ["id", "kind", "fact", "op", "valueJson", "childIds"],
+      additionalProperties: false,
+    },
+    citation: {
+      type: "object",
+      properties: {
+        pageId: stringSchema,
+        pageUrl: stringSchema,
+        blockId: stringSchema,
+        excerpt: stringSchema,
+        websiteActionIds: stringArraySchema,
+      },
+      required: ["pageId", "pageUrl", "blockId", "excerpt", "websiteActionIds"],
       additionalProperties: false,
     },
     rule: {
-      oneOf: [
-        ruleSchema("permit"),
-        ruleSchema("prohibit"),
-        ruleSchema("require_condition"),
-        ruleSchema("require_action"),
+      type: "object",
+      properties: {
+        id: stringSchema,
+        actionId: stringSchema,
+        effect: { enum: ["permit", "prohibit", "require_condition", "require_action"] },
+        appliesWhenConditionId: stringSchema,
+        requirementConditionId: stringSchema,
+        requiredActionId: stringSchema,
+        citations: { type: "array", items: { $ref: "#/$defs/citation" } },
+        semanticConfidence: { type: "number" },
+        needsReview: { type: "boolean" },
+        reviewReason: stringSchema,
+      },
+      required: [
+        "id",
+        "actionId",
+        "effect",
+        "appliesWhenConditionId",
+        "requirementConditionId",
+        "requiredActionId",
+        "citations",
+        "semanticConfidence",
+        "needsReview",
+        "reviewReason",
       ],
+      additionalProperties: false,
     },
   },
 };
 
+// Preserve the existing exported name used by request construction and callers.
+export const PROCEDURE_MODEL_OUTPUT_SCHEMA = COMPACT_EXTRACTION_OUTPUT_SCHEMA;
+
+/** Stage 1: policy semantics and provenance only, with no procedure graph IDs. */
+export const POLICY_EXTRACTION_OUTPUT_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    schemaVersion: { const: 1 },
+    policyAnalysisId: stringSchema,
+    sourceSnapshotId: stringSchema,
+    sourceSnapshotHash: stringSchema,
+    factDefinitions: { type: "array", items: { $ref: "#/$defs/factDefinition" } },
+    conditionNodes: { type: "array", items: { $ref: "#/$defs/conditionNode" } },
+    rules: { type: "array", items: { $ref: "#/$defs/policyRule" } },
+  },
+  required: [
+    "schemaVersion",
+    "policyAnalysisId",
+    "sourceSnapshotId",
+    "sourceSnapshotHash",
+    "factDefinitions",
+    "conditionNodes",
+    "rules",
+  ],
+  additionalProperties: false,
+  $defs: {
+    factDefinition: {
+      type: "object",
+      properties: {
+        key: stringSchema,
+        label: stringSchema,
+        type: { enum: ["string", "number", "boolean"] },
+        allowedValuesJson: stringSchema,
+        sensitive: { const: false },
+      },
+      required: ["key", "label", "type", "allowedValuesJson", "sensitive"],
+      additionalProperties: false,
+    },
+    conditionNode: {
+      type: "object",
+      properties: {
+        id: stringSchema,
+        kind: { enum: ["always", "fact", "all", "any", "not"] },
+        fact: stringSchema,
+        op: { enum: ["", "eq", "neq", "in", "not_in", "lt", "lte", "gt", "gte"] },
+        valueJson: stringSchema,
+        childIds: stringArraySchema,
+      },
+      required: ["id", "kind", "fact", "op", "valueJson", "childIds"],
+      additionalProperties: false,
+    },
+    citation: {
+      type: "object",
+      properties: {
+        pageId: stringSchema,
+        pageUrl: stringSchema,
+        blockId: stringSchema,
+        excerpt: stringSchema,
+        websiteActionIds: stringArraySchema,
+      },
+      required: ["pageId", "pageUrl", "blockId", "excerpt", "websiteActionIds"],
+      additionalProperties: false,
+    },
+    policyRule: {
+      type: "object",
+      properties: {
+        id: stringSchema,
+        effect: { enum: ["permit", "prohibit", "require_condition", "require_action"] },
+        actionPurpose: stringSchema,
+        appliesWhenConditionId: stringSchema,
+        requirementConditionId: stringSchema,
+        requiredActionPurpose: stringSchema,
+        qualifierConditionIds: stringArraySchema,
+        citations: { type: "array", items: { $ref: "#/$defs/citation" } },
+        semanticConfidence: { type: "number" },
+        needsReview: { type: "boolean" },
+        reviewReason: stringSchema,
+      },
+      required: [
+        "id",
+        "effect",
+        "actionPurpose",
+        "appliesWhenConditionId",
+        "requirementConditionId",
+        "requiredActionPurpose",
+        "qualifierConditionIds",
+        "citations",
+        "semanticConfidence",
+        "needsReview",
+        "reviewReason",
+      ],
+      additionalProperties: false,
+    },
+  },
+};
+
+/** Stage 2: procedure graph plus an explicit mapping for every Stage 1 rule. */
+export const PROCEDURE_MAPPING_OUTPUT_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    schemaVersion: { const: 1 },
+    id: stringSchema,
+    sourceSnapshotId: stringSchema,
+    sourceSnapshotHash: stringSchema,
+    extractedAt: stringSchema,
+    goalSummary: stringSchema,
+    actions: { type: "array", items: { $ref: "#/$defs/action" } },
+    goalActionIds: stringArraySchema,
+    ruleMappings: { type: "array", items: { $ref: "#/$defs/ruleMapping" } },
+  },
+  required: [
+    "schemaVersion",
+    "id",
+    "sourceSnapshotId",
+    "sourceSnapshotHash",
+    "extractedAt",
+    "goalSummary",
+    "actions",
+    "goalActionIds",
+    "ruleMappings",
+  ],
+  additionalProperties: false,
+  $defs: {
+    action: {
+      type: "object",
+      properties: {
+        id: stringSchema,
+        kind: { enum: ["navigate", "interact", "user_task"] },
+        label: stringSchema,
+        description: stringSchema,
+        websiteActionId: stringSchema,
+        prerequisiteActionIds: stringArraySchema,
+        terminal: { type: "boolean" },
+      },
+      required: [
+        "id",
+        "kind",
+        "label",
+        "description",
+        "websiteActionId",
+        "prerequisiteActionIds",
+        "terminal",
+      ],
+      additionalProperties: false,
+    },
+    ruleMapping: {
+      type: "object",
+      properties: {
+        policyRuleId: stringSchema,
+        actionId: stringSchema,
+        requiredActionId: stringSchema,
+      },
+      required: ["policyRuleId", "actionId", "requiredActionId"],
+      additionalProperties: false,
+    },
+  },
+};

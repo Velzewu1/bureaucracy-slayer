@@ -265,4 +265,4 @@ it.runIf(portalUrl !== undefined)("captures the configured unmodified mock porta
   expect(visibleText).toContain("cancel");
   expect(visibleText).toContain("recovery");
   expect(actionLabels.length).toBeGreaterThan(0);
-});
+}, 20_000);

@@ -4,20 +4,38 @@
   "private": true,
   "type": "module",
   "description": "Evidence-first policy evaluation and deterministic planning foundation.",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "demo": "tsx scripts/demo.ts"
+    "demo": "tsx scripts/demo.ts",
+    "portal:dev": "npm --prefix mock-portal run dev",
+    "portal:build": "npm --prefix mock-portal run build",
+    "portal:preview": "npm --prefix mock-portal run preview",
+    "test:live-extract": "tsx scripts/live-extraction.ts",
+    "dev:ui": "vite --config vite.ui.config.ts",
+    "build:ui": "vite build --config vite.ui.config.ts",
+    "preview:ui": "vite preview --config vite.ui.config.ts",
+    "test:ui": "vitest run tests/ui"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.135.0",
+    "@noble/hashes": "1.8.0",
     "playwright": "1.64.1",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
     "zod": "4.1.12"
   },
   "devDependencies": {
     "@types/node": "24.10.0",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
     "tsx": "4.20.6",
     "typescript": "5.9.3",
+    "vite": "7.3.7",
     "vitest": "4.1.12"
   }
 }
