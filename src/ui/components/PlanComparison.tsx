@@ -6,6 +6,12 @@ type PlanComparisonProps = Readonly<{
   current: DemoAnalysis;
 }>;
 
+function displayFact(value: string | number | boolean | undefined): string {
+  if (value === undefined) return "unknown";
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  return String(value);
+}
+
 export function PlanComparison({ original, current }: PlanComparisonProps) {
   const difference = planDifference(original, current);
 
@@ -13,7 +19,7 @@ export function PlanComparison({ original, current }: PlanComparisonProps) {
     <section className="panel comparison-panel" aria-labelledby="comparison-heading">
       <div className="panel-heading panel-heading--compact">
         <div>
-          <span className="section-number">06</span>
+          <span className="section-number">05</span>
           <div>
             <p className="eyebrow">Replanning audit</p>
             <h2 id="comparison-heading">Original vs updated route</h2>
@@ -40,6 +46,22 @@ export function PlanComparison({ original, current }: PlanComparisonProps) {
           <code>{current.plan.id}</code>
           <small>Revision {current.plan.userStateRevision}</small>
         </article>
+      </div>
+
+      <div className="change-cause">
+        <span>Precise cause of replan</span>
+        {difference.changedFacts.length === 0 ? (
+          <strong>No user fact value changed.</strong>
+        ) : (
+          difference.changedFacts.map((fact) => (
+            <strong key={fact.key}>
+              {fact.label}: {displayFact(fact.before)} → {displayFact(fact.after)}
+            </strong>
+          ))
+        )}
+        <small>
+          Selected decision: {difference.decisionBefore} → {difference.decisionAfter}
+        </small>
       </div>
 
       <div className="route-delta">

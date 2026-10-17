@@ -4,6 +4,7 @@ import type { JsonScalar, UserState } from "../contracts/index.js";
 import { FixtureDemoProvider } from "./adapters/fixtureDemoProvider.js";
 import { AnalysisSetup } from "./components/AnalysisSetup.js";
 import { AppHeader } from "./components/AppHeader.js";
+import { DecisionIntelligencePanel } from "./components/DecisionIntelligencePanel.js";
 import { ExcludedActionsPanel } from "./components/ExcludedActionsPanel.js";
 import { PlanComparison } from "./components/PlanComparison.js";
 import { PolicyEvidencePanel } from "./components/PolicyEvidencePanel.js";
@@ -235,6 +236,7 @@ export function App({ provider = fixtureProvider }: AppProps) {
             ) : (
               <>
                 <SafeRoutePanel analysis={analysis} />
+                <DecisionIntelligencePanel analysis={analysis} />
                 {originalAnalysis !== null &&
                 originalAnalysis.plan.id !== analysis.plan.id ? (
                   <PlanComparison original={originalAnalysis} current={analysis} />

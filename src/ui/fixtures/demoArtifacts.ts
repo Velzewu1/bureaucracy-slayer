@@ -358,6 +358,13 @@ export const scheduledInstantState = userState(1, {
   "verification.complete": true,
 });
 
+export const unknownMethodState = userState(1, {
+  "payment.status": "scheduled",
+  "transfer.processingBegun": false,
+  "verification.begun": true,
+  "verification.complete": true,
+});
+
 export const wrongQuoteModel: ProcedureModel = ProcedureModelSchema.parse({
   ...demoProcedureModel,
   id: "procedure_badquote1",
@@ -388,6 +395,14 @@ export const demoScenarios: readonly DemoScenario[] = [
     label: "Dynamic replanning",
     description: "Change the transfer method from standard to instant and replan without Claude or Playwright.",
     defaultUserState: scheduledStandardState,
+  },
+  {
+    id: "unknown-fact",
+    experiment: "Decision question",
+    label: "Unknown transfer method",
+    description:
+      "An unanswered relevant fact triggers a ranked question backed by deterministic what-if outcomes.",
+    defaultUserState: unknownMethodState,
   },
   {
     id: "evidence-failure",

@@ -5,6 +5,7 @@ import {
   type ProcedureModel,
   type UserState,
 } from "../../contracts/index.js";
+import { analyzeDecisionIntelligence } from "../../decision/index.js";
 import { evaluatePolicies, planActions } from "../../engine/index.js";
 import { validateEvidence } from "../../evidence/index.js";
 import {
@@ -78,7 +79,7 @@ export class FixtureDemoProvider implements DemoDataProvider {
       userStateHash,
     });
 
-    return {
+    const analysis: Omit<DemoAnalysis, "decisionIntelligence"> = {
       sessionId: session.id,
       mode: "recorded_fixture",
       replanMode: "deterministic_engine",
@@ -90,6 +91,11 @@ export class FixtureDemoProvider implements DemoDataProvider {
       evidence: session.evidence,
       evaluation,
       plan,
+      userState,
+    };
+    return {
+      ...analysis,
+      decisionIntelligence: analyzeDecisionIntelligence(analysis),
     };
   }
 

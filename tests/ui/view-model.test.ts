@@ -109,6 +109,14 @@ describe("UI view models", () => {
       changed: true,
       removedActions: ["Open transfer details", "Cancel transfer"],
       addedActions: ["Contact support"],
+      changedFacts: [
+        {
+          key: "payment.method",
+          label: "Transfer method",
+          before: "standard",
+          after: "instant",
+        },
+      ],
       snapshotUnchanged: true,
       evidenceUnchanged: true,
     });

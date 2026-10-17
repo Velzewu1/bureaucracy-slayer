@@ -7,6 +7,7 @@ import {
   demoSnapshot,
   scheduledInstantState,
   scheduledStandardState,
+  unknownMethodState,
 } from "../../src/ui/fixtures/demoArtifacts.js";
 
 const fixedNow = () => "2026-10-17T04:00:00.000Z";
@@ -102,6 +103,21 @@ describe("FixtureDemoProvider", () => {
     expect(cancelControl).toMatchObject({ visible: true, enabled: true });
     expect(cancel).toMatchObject({ status: "forbidden", reasonCodes: ["PROHIBITED"] });
     expect(analysis.plan.steps.map((step) => step.procedureActionId)).toEqual(["proc_support1"]);
+  });
+
+  it("exposes a deterministic highest-priority question for the unknown scenario", async () => {
+    const analysis = await createProvider().analyze({
+      goal: demoGoal,
+      portalUrl: demoSnapshot.rootUrl,
+      scenarioId: "unknown-fact",
+      userState: unknownMethodState,
+    });
+
+    expect(analysis.plan.status).toBe("needs_information");
+    expect(analysis.decisionIntelligence.nextQuestion).toMatchObject({
+      factKey: "payment.method",
+      distinctOutcomeCount: 2,
+    });
   });
 
   it("fails closed when the recorded permit citation does not match its source block", async () => {

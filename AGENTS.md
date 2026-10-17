@@ -24,6 +24,7 @@ Use the structure defined in `ARCHITECTURE.md`:
 - `src/extraction/`: Claude prompt and structured-output parsing. This is the only probabilistic interpretation boundary.
 - `src/evidence/`: citation, action, reference, allowlist, graph, and hash validation.
 - `src/engine/`: pure condition evaluation, policy evaluation, and planning. No I/O, browser, React, HTTP, or model SDK imports.
+- `src/decision/`: pure inspection of engine results plus bounded deterministic what-if evaluation; owns no policy semantics.
 - `src/orchestration/`: application use cases and artifact coordination; no new policy semantics.
 - `src/server/`: thin schema-validated HTTP adapters.
 - `src/ui/`: React presentation and user-fact collection; no policy decisions.
@@ -33,7 +34,9 @@ Use the structure defined in `ARCHITECTURE.md`:
 Allowed dependency direction:
 
 ```text
-ui/server -> orchestration -> collector | extraction | evidence | engine
+ui/server -> orchestration | decision
+orchestration -> collector | extraction | evidence | engine
+decision -> engine
 collector | evidence -> shared -> contracts
 engine -> contracts
 ```

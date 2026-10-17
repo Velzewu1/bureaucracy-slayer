@@ -18,7 +18,7 @@ export function PolicyEvidencePanel({ analysis }: PolicyEvidencePanelProps) {
     <section className="panel evidence-panel" aria-labelledby="evidence-heading">
       <div className="panel-heading panel-heading--compact">
         <div>
-          <span className="section-number">04</span>
+          <span className="section-number">07</span>
           <div>
             <p className="eyebrow">Policy provenance</p>
             <h2 id="evidence-heading">Verified source evidence</h2>
@@ -34,8 +34,10 @@ export function PolicyEvidencePanel({ analysis }: PolicyEvidencePanelProps) {
         guarantee that the interpretation is legally or semantically correct.
       </p>
 
-      <div className="evidence-list">
-        {cards.map((card) => (
+      <details className="full-evidence">
+        <summary>Browse all policy evidence ({cards.length})</summary>
+        <div className="evidence-list">
+          {cards.map((card) => (
           <article className={`evidence-card evidence-card--${card.status}`} key={card.id}>
             <div className="evidence-card__topline">
               <span className={`evidence-status evidence-status--${card.status}`}>
@@ -88,8 +90,9 @@ export function PolicyEvidencePanel({ analysis }: PolicyEvidencePanelProps) {
               </div>
             ) : null}
           </article>
-        ))}
-      </div>
+          ))}
+        </div>
+      </details>
     </section>
   );
 }

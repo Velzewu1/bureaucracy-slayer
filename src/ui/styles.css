@@ -1398,6 +1398,238 @@ main {
   color: var(--amber);
 }
 
+.intelligence-panel {
+  padding: 26px;
+  border-color: #cad8c9;
+  background: linear-gradient(145deg, #fff 58%, #f3f8ec);
+}
+
+.decision-state {
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  font-size: 0.64rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.decision-state--allowed {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.decision-state--forbidden {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.decision-state--indeterminate,
+.decision-state--review {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.why-summary {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.35fr) minmax(0, 1fr);
+  gap: 18px;
+  margin: 20px 0;
+  padding: 20px;
+  border-radius: 14px;
+  background: var(--dark);
+  color: white;
+}
+
+.why-summary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.why-summary span,
+.next-question > span,
+.change-cause > span {
+  color: #8fa39c;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.why-summary strong {
+  color: var(--lime);
+  font-size: 1.12rem;
+}
+
+.why-summary p {
+  margin: 0;
+  color: #dce7e2;
+  font-size: 0.78rem;
+  line-height: 1.65;
+}
+
+.next-question {
+  margin-bottom: 18px;
+  padding: 17px 18px;
+  border: 1px solid #edcf92;
+  border-radius: 13px;
+  background: var(--amber-soft);
+}
+
+.next-question > strong {
+  display: block;
+  margin-top: 5px;
+  color: #75420b;
+  font-size: 1rem;
+}
+
+.next-question p {
+  margin: 7px 0 10px;
+  color: #76562f;
+  font-size: 0.72rem;
+}
+
+.next-question > div,
+.trace-rule > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.next-question > div span {
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 72%);
+  font-size: 0.63rem;
+  font-weight: 700;
+}
+
+.trace-rule-list,
+.counterfactual-list {
+  display: grid;
+  gap: 10px;
+}
+
+.trace-rule {
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+}
+
+.trace-rule > div:first-child > strong {
+  color: #52605b;
+  font-size: 0.66rem;
+  text-transform: capitalize;
+}
+
+.trace-rule > div:first-child > code {
+  margin-left: auto;
+}
+
+.trace-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 12px 0;
+}
+
+.trace-facts > span {
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: var(--surface-soft);
+  color: #4f5d58;
+  font-size: 0.65rem;
+}
+
+.requirement-result,
+.computation-note {
+  color: var(--muted);
+  font-size: 0.67rem;
+}
+
+.trace-rule details,
+.counterfactuals,
+.full-evidence {
+  margin-top: 12px;
+}
+
+.trace-rule summary,
+.counterfactuals > summary,
+.full-evidence > summary {
+  color: var(--green);
+  cursor: pointer;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.trace-rule blockquote {
+  margin: 10px 0 0;
+  padding: 12px;
+  border-left: 3px solid var(--lime-strong);
+  background: var(--surface-soft);
+  font-size: 0.7rem;
+  line-height: 1.55;
+}
+
+.trace-rule blockquote footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.counterfactual-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.counterfactual-list article {
+  padding: 13px;
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.counterfactual-list span,
+.counterfactual-list strong,
+.counterfactual-list small {
+  display: block;
+}
+
+.counterfactual-list span,
+.counterfactual-list small {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.counterfactual-list p {
+  margin: 7px 0;
+  font-size: 0.68rem;
+}
+
+.change-cause {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 14px 0;
+  padding: 13px;
+  border-left: 3px solid var(--lime-strong);
+  background: var(--surface-soft);
+}
+
+.change-cause > strong {
+  font-size: 0.72rem;
+}
+
+.change-cause > small {
+  color: var(--muted);
+}
+
+.full-evidence > .evidence-list {
+  margin-top: 16px;
+}
+
 .app-footer {
   display: flex;
   align-items: center;
@@ -1476,6 +1708,11 @@ main {
     grid-template-columns: 1fr;
   }
 
+  .why-summary,
+  .counterfactual-list {
+    grid-template-columns: 1fr;
+  }
+
   .comparison-arrow {
     transform: rotate(90deg);
   }
@@ -1516,6 +1753,11 @@ main {
   .evidence-panel,
   .excluded-panel,
   .comparison-panel {
+    padding: 19px;
+    border-radius: 14px;
+  }
+
+  .intelligence-panel {
     padding: 19px;
     border-radius: 14px;
   }

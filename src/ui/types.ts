@@ -6,8 +6,13 @@ import type {
   SiteSnapshot,
   UserState,
 } from "../contracts/index.js";
+import type { DecisionIntelligence } from "../decision/index.js";
 
-export type DemoScenarioId = "policy-exception" | "dynamic-replanning" | "evidence-failure";
+export type DemoScenarioId =
+  | "policy-exception"
+  | "dynamic-replanning"
+  | "unknown-fact"
+  | "evidence-failure";
 
 export type DemoScenario = Readonly<{
   id: DemoScenarioId;
@@ -36,6 +41,8 @@ export type DemoAnalysis = Readonly<{
   evidence: EvidenceResult;
   evaluation: EvaluationResult;
   plan: SafeActionPlan;
+  userState: UserState;
+  decisionIntelligence: DecisionIntelligence;
 }>;
 
 export interface DemoDataProvider {

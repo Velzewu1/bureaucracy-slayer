@@ -235,6 +235,19 @@ One screen shows:
 
 The UI renders structured results; it does not reinterpret policy in free-form prose.
 
+### 6.11 Decision intelligence
+
+`src/decision/` is a pure, deterministic inspection layer over parsed artifacts and the
+existing engine outputs. It may re-evaluate policy conditions to expose fact-level truth
+values and may call the canonical evaluator and planner with copied, revision-incremented
+user states for bounded counterfactuals. It must not replace, reinterpret, or override an
+`EvaluationResult` or `SafeActionPlan`.
+
+Adaptive questions are limited to unresolved model-declared boolean facts or facts with
+enumerated allowed values. Ranking is a stable heuristic based on materially distinct
+what-if outcomes; it is not claimed to be mathematically optimal. Hypothetical analysis
+never mutates the current `UserState` and performs no collection or extraction.
+
 ## 7. Data flow and contracts
 
 ### Build-time/demo preparation flow
@@ -696,6 +709,7 @@ The intended single-package structure is:
       conditions.ts           three-valued condition evaluation
       evaluator.ts            deterministic policy decisions
       planner.ts              dependency expansion and route selection
+    decision/                 pure traces, bounded counterfactuals, adaptive questions
     orchestration/            use cases joining modules; artifact cache
     server/                   thin validated HTTP adapters
     ui/                       React components; no policy decisions
@@ -708,9 +722,9 @@ The intended single-package structure is:
   artifacts/                  ignored generated demo captures; sanitized only
 ```
 
-Dependency direction is inward: `ui/server -> orchestration -> collector|extraction|evidence|engine`; `collector|evidence -> shared -> contracts`, while `engine` imports only contracts and its own pure utilities. Collector and extraction must not import engine rules. The mock portal must never be imported by production modules.
+Dependency direction is inward: `ui/server -> orchestration|decision`; `orchestration -> collector|extraction|evidence|engine`; `decision -> engine`; and `collector|evidence -> shared -> contracts`, while `engine` imports only contracts and its own pure utilities. Collector and extraction must not import engine rules. The mock portal must never be imported by production modules.
 
-The canonical module roots are `src/contracts/`, `src/shared/`, `src/collector/`, `src/extraction/`, `src/evidence/`, `src/engine/`, `src/orchestration/`, `src/server/`, and `src/ui/`. Canonical test roots are `tests/unit/`, `tests/collector/`, `tests/fixtures/`, and `tests/e2e/`; the controlled site root is `mock-portal/`. All new collector-specific tests belong in `tests/collector/`, including pure hashing/normalization tests and Playwright tests against local deterministic pages. `tests/e2e/` is reserved for later cross-module vertical-slice tests. Do not split collector tests across `tests/unit/` and `tests/integration/`.
+The canonical module roots are `src/contracts/`, `src/shared/`, `src/collector/`, `src/extraction/`, `src/evidence/`, `src/engine/`, `src/decision/`, `src/orchestration/`, `src/server/`, and `src/ui/`. Canonical test roots are `tests/unit/`, `tests/collector/`, `tests/fixtures/`, and `tests/e2e/`; the controlled site root is `mock-portal/`. All new collector-specific tests belong in `tests/collector/`, including pure hashing/normalization tests and Playwright tests against local deterministic pages. `tests/e2e/` is reserved for later cross-module vertical-slice tests. Do not split collector tests across `tests/unit/` and `tests/integration/`.
 
 ## 15. Concrete test scenarios and expected outcomes
 

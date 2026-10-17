@@ -12,7 +12,7 @@ export function ExcludedActionsPanel({ analysis }: ExcludedActionsPanelProps) {
     <section className="panel excluded-panel" aria-labelledby="excluded-heading">
       <div className="panel-heading panel-heading--compact">
         <div>
-          <span className="section-number">05</span>
+          <span className="section-number">06</span>
           <div>
             <p className="eyebrow">Routes not taken</p>
             <h2 id="excluded-heading">Blocked &amp; review-required actions</h2>

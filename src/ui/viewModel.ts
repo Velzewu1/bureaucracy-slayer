@@ -196,6 +196,22 @@ export function updateUserFact(
 export function planDifference(original: DemoAnalysis, current: DemoAnalysis) {
   const originalActionIds = original.plan.steps.map((step) => step.procedureActionId);
   const currentActionIds = current.plan.steps.map((step) => step.procedureActionId);
+  const factKeys = [
+    ...new Set([
+      ...Object.keys(original.userState.facts),
+      ...Object.keys(current.userState.facts),
+    ]),
+  ].sort();
+  const changedFacts = factKeys
+    .filter((key) => original.userState.facts[key] !== current.userState.facts[key])
+    .map((key) => ({
+      key,
+      label:
+        current.model.factDefinitions.find((definition) => definition.key === key)?.label ??
+        key,
+      before: original.userState.facts[key],
+      after: current.userState.facts[key],
+    }));
   return {
     changed:
       original.plan.id !== current.plan.id ||
@@ -209,6 +225,9 @@ export function planDifference(original: DemoAnalysis, current: DemoAnalysis) {
     addedActions: currentActionIds
       .filter((id) => !originalActionIds.includes(id))
       .map((id) => actionLabel(current, id)),
+    changedFacts,
+    decisionBefore: original.decisionIntelligence.trace.decision.status,
+    decisionAfter: current.decisionIntelligence.trace.decision.status,
     snapshotUnchanged: original.snapshot.id === current.snapshot.id,
     evidenceUnchanged: original.evidence.id === current.evidence.id,
   };
