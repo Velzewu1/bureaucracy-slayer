@@ -4,11 +4,16 @@ type AnthropicConstructor = new (
   options: Readonly<{
     apiKey: string;
     defaultHeaders?: Record<string, string>;
+    timeout: number;
+    maxRetries: number;
   }>,
 ) => unknown;
 type AnthropicClient = Readonly<{
   messages: Readonly<{
-    create(request: ClaudeMessageRequest): Promise<unknown>;
+    create(
+      request: ClaudeMessageRequest,
+      options: Readonly<{ timeout: number; maxRetries: number }>,
+    ): Promise<unknown>;
   }>;
 }>;
 
@@ -23,6 +28,8 @@ export type ClaudeTransportDiagnostic = Readonly<{
 }>;
 
 const MAX_DIAGNOSTIC_MESSAGE_LENGTH = 500;
+export const DEFAULT_ANTHROPIC_REQUEST_TIMEOUT_MS = 180_000;
+export const DEFAULT_ANTHROPIC_MAX_RETRIES = 0;
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return (typeof value === "object" && value !== null) || typeof value === "function";
@@ -175,6 +182,8 @@ function isPotentiallyRetryable(error: unknown, status: number | undefined): boo
 export type AnthropicTransportOptions = Readonly<{
   apiKey?: string;
   environment?: Readonly<Record<string, string | undefined>>;
+  requestTimeoutMs?: number;
+  maxRetries?: number;
 }>;
 
 /** Loads the official SDK only when a live transport is requested. */
@@ -185,6 +194,25 @@ export async function createAnthropicTransport(
   const apiKey = options.apiKey?.trim() || environment["ANTHROPIC_API_KEY"]?.trim();
   if (apiKey === undefined || apiKey.length === 0) {
     throw new ClaudeTransportError("ANTHROPIC_API_KEY is required for live extraction.", false);
+  }
+  const requestTimeoutMs =
+    options.requestTimeoutMs ?? DEFAULT_ANTHROPIC_REQUEST_TIMEOUT_MS;
+  const maxRetries = options.maxRetries ?? DEFAULT_ANTHROPIC_MAX_RETRIES;
+  if (
+    !Number.isInteger(requestTimeoutMs) ||
+    requestTimeoutMs <= 0 ||
+    requestTimeoutMs > DEFAULT_ANTHROPIC_REQUEST_TIMEOUT_MS
+  ) {
+    throw new ClaudeTransportError(
+      "The Anthropic request timeout must be a positive integer no greater than 180 seconds.",
+      false,
+    );
+  }
+  if (!Number.isInteger(maxRetries) || maxRetries < 0 || maxRetries > 1) {
+    throw new ClaudeTransportError(
+      "The Anthropic SDK retry count must be zero or one.",
+      false,
+    );
   }
 
   const packageSpecifier: string = "@anthropic-ai/sdk";
@@ -204,6 +232,8 @@ export async function createAnthropicTransport(
 
     client = new sdkModule.default({
       apiKey,
+      timeout: requestTimeoutMs,
+      maxRetries,
       ...(workspaceId
         ? {
             defaultHeaders: {
@@ -220,9 +250,26 @@ export async function createAnthropicTransport(
   }
 
   return {
-    async createMessage(request: ClaudeMessageRequest): Promise<unknown> {
+    async createMessage(
+      request: ClaudeMessageRequest,
+      requestOptions,
+    ): Promise<unknown> {
+      const effectiveTimeoutMs = requestOptions?.timeoutMs ?? requestTimeoutMs;
+      if (
+        !Number.isInteger(effectiveTimeoutMs) ||
+        effectiveTimeoutMs <= 0 ||
+        effectiveTimeoutMs > requestTimeoutMs
+      ) {
+        throw new ClaudeTransportError(
+          "The per-request Anthropic timeout must be positive and within the configured bound.",
+          false,
+        );
+      }
       try {
-        return await client.messages.create(request);
+        return await client.messages.create(request, {
+          timeout: effectiveTimeoutMs,
+          maxRetries,
+        });
       } catch (error) {
         const status = statusFromError(error);
         throw new ClaudeTransportError(

@@ -25,7 +25,10 @@ export type ClaudeMessageRequest = Readonly<{
 }>;
 
 export type ClaudeTransport = Readonly<{
-  createMessage(request: ClaudeMessageRequest): Promise<unknown>;
+  createMessage(
+    request: ClaudeMessageRequest,
+    options?: Readonly<{ timeoutMs?: number }>,
+  ): Promise<unknown>;
 }>;
 
 export type ExtractionDebugEvent =
