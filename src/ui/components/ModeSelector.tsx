@@ -17,6 +17,11 @@ const modes: readonly Readonly<{ id: DemoMode; label: string; detail: string }>[
     label: "Recorded Sonnet extraction",
     detail: "Previously extracted model with uncertainty preserved",
   },
+  {
+    id: "live_sonnet",
+    label: "Live Sonnet extraction",
+    detail: "Collects the local portal and runs Sonnet now",
+  },
 ];
 
 export function ModeSelector({ mode, disabled, onChange }: ModeSelectorProps) {

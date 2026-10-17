@@ -1,5 +1,9 @@
 type AppHeaderProps = Readonly<{
   portalName: string;
+  modeLabel: string;
+  analyzeLabel: string;
+  reanalyzeLabel: string;
+  busyLabel: string;
   isBusy: boolean;
   hasAnalysis: boolean;
   onAnalyze: () => void;
@@ -7,6 +11,10 @@ type AppHeaderProps = Readonly<{
 
 export function AppHeader({
   portalName,
+  modeLabel,
+  analyzeLabel,
+  reanalyzeLabel,
+  busyLabel,
   isBusy,
   hasAnalysis,
   onAnalyze,
@@ -35,18 +43,18 @@ export function AppHeader({
         </div>
         <span className="mode-pill">
           <span className="mode-pill__dot" aria-hidden="true" />
-          Recorded demo
+          {modeLabel}
         </span>
         <button className="button button--primary" type="button" onClick={onAnalyze} disabled={isBusy}>
           {isBusy ? (
             <>
               <span className="spinner" aria-hidden="true" />
-              Analyzing
+              {busyLabel}
             </>
           ) : hasAnalysis ? (
-            "Analyze again"
+            reanalyzeLabel
           ) : (
-            "Analyze website"
+            analyzeLabel
           )}
         </button>
       </div>

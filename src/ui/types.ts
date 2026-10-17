@@ -7,9 +7,12 @@ import type {
   UserState,
 } from "../contracts/index.js";
 import type { DecisionIntelligence } from "../decision/index.js";
+import type {
+  LiveExtractionClientStopReason,
+} from "../orchestration/live-extraction-contract.js";
 import type { RecordedSemanticFinding } from "./recordedBundle.js";
 
-export type DemoMode = "verified_fixture" | "recorded_sonnet";
+export type DemoMode = "verified_fixture" | "recorded_sonnet" | "live_sonnet";
 
 export type DemoScenarioId =
   | "policy-exception"
@@ -30,6 +33,25 @@ export type AnalysisRequest = Readonly<{
   portalUrl: string;
   scenarioId: DemoScenarioId;
   userState: UserState;
+}>;
+
+export type LiveExtractionPhase =
+  | "queued"
+  | "collecting"
+  | "selecting_sources"
+  | "extracting_policy"
+  | "mapping_procedure"
+  | "validating"
+  | "complete"
+  | "failed";
+
+export type AnalysisProgress = Readonly<{
+  phase: LiveExtractionPhase;
+  jobId?: string;
+}>;
+
+export type AnalysisRunOptions = Readonly<{
+  onProgress?: (progress: AnalysisProgress) => void;
 }>;
 
 export type DemoAnalysis = Readonly<{
@@ -56,7 +78,9 @@ export type DemoAnalysis = Readonly<{
 }>;
 
 export interface DemoDataProvider {
-  analyze(request: AnalysisRequest): Promise<DemoAnalysis>;
+  analyze(request: AnalysisRequest, options?: AnalysisRunOptions): Promise<DemoAnalysis>;
   replan(sessionId: string, userState: UserState): Promise<DemoAnalysis>;
   getEvidence(sessionId: string): Promise<EvidenceResult>;
+  stop?(reason: LiveExtractionClientStopReason): void;
+  canResume?(): boolean;
 }

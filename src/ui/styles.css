@@ -326,7 +326,7 @@ main {
 
 .mode-selector {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin: 0 0 10px;
   padding: 0;
@@ -393,6 +393,11 @@ main {
 .mode-notice--recorded_sonnet {
   border-color: #ead4a9;
   background: #fffaf0;
+}
+
+.mode-notice--live_sonnet {
+  border-color: #b9d3da;
+  background: var(--blue-soft);
 }
 
 .field-note {

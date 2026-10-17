@@ -1,4 +1,8 @@
 import type { UserState } from "../contracts/index.js";
+import {
+  LIVE_DEMO_GOAL,
+  LIVE_DEMO_PORTAL_URL,
+} from "./adapters/liveExtractionProvider.js";
 import { recordedExtractionBundle } from "./adapters/recordedExtractionProvider.js";
 import {
   demoGoal,
@@ -17,6 +21,7 @@ export type ModeWorkspaceState = Readonly<{
   originalAnalysis: DemoAnalysis | null;
   isDirty: boolean;
   error: string | null;
+  errorKind: "analysis" | "live_operational" | "live_integrity" | "live_stopped" | null;
 }>;
 
 function fixtureDefaultState(): UserState {
@@ -35,19 +40,77 @@ function copyUserState(userState: UserState): UserState {
 
 export function createModeWorkspaceState(mode: DemoMode): ModeWorkspaceState {
   const recorded = mode === "recorded_sonnet";
+  const live = mode === "live_sonnet";
   return {
     mode,
-    goal: recorded ? recordedExtractionBundle.extractionGoal : demoGoal,
-    portalUrl: recorded ? recordedExtractionBundle.sourceSnapshot.rootUrl : demoSnapshot.rootUrl,
+    goal: live
+      ? LIVE_DEMO_GOAL
+      : recorded
+        ? recordedExtractionBundle.extractionGoal
+        : demoGoal,
+    portalUrl: live
+      ? LIVE_DEMO_PORTAL_URL
+      : recorded
+        ? recordedExtractionBundle.sourceSnapshot.rootUrl
+        : demoSnapshot.rootUrl,
     scenarioId: "dynamic-replanning",
-    userState: copyUserState(
-      recorded
-        ? recordedExtractionBundle.defaultScenario.userState
-        : fixtureDefaultState(),
-    ),
+    userState: live
+      ? { schemaVersion: 1, revision: 0, facts: {} }
+      : copyUserState(
+          recorded
+            ? recordedExtractionBundle.defaultScenario.userState
+            : fixtureDefaultState(),
+        ),
     analysis: null,
     originalAnalysis: null,
     isDirty: false,
     error: null,
+    errorKind: null,
+  };
+}
+
+export function applyAnalysisResult(
+  current: ModeWorkspaceState,
+  expectedMode: DemoMode,
+  analysis: DemoAnalysis,
+  kind: "analysis" | "replan",
+): ModeWorkspaceState {
+  if (current.mode !== expectedMode || analysis.mode !== expectedMode) return current;
+  return {
+    ...current,
+    analysis,
+    originalAnalysis: kind === "analysis" ? analysis : current.originalAnalysis,
+    userState: analysis.userState,
+    isDirty: false,
+    error: null,
+    errorKind: null,
+  };
+}
+
+export function beginModeAnalysis(current: ModeWorkspaceState): ModeWorkspaceState {
+  return {
+    ...current,
+    ...(current.mode === "live_sonnet"
+      ? { analysis: null, originalAnalysis: null, isDirty: false }
+      : {}),
+    error: null,
+    errorKind: null,
+  };
+}
+
+export function failModeAnalysis(
+  current: ModeWorkspaceState,
+  expectedMode: DemoMode,
+  message: string,
+  errorKind: Exclude<ModeWorkspaceState["errorKind"], null> = "analysis",
+): ModeWorkspaceState {
+  if (current.mode !== expectedMode) return current;
+  return {
+    ...current,
+    ...(current.mode === "live_sonnet"
+      ? { analysis: null, originalAnalysis: null, isDirty: false }
+      : {}),
+    error: message,
+    errorKind,
   };
 }
