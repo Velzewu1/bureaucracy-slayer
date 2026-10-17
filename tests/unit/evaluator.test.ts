@@ -36,6 +36,45 @@ describe("policy evaluation", () => {
     expect(decision.reasonCodes).toEqual(expect.arrayContaining(["POLICY_CONFLICT", "PROHIBITED"]));
   });
 
+  it("does not authorize an action when its prohibition is omitted from the evidence partition", () => {
+    const { model, evidence } = validatedArtifacts(baseProcedureModelFixture);
+    const state = UserStateSchema.parse(scheduledInstantStateFixture);
+    const incompleteEvidence = {
+      ...evidence,
+      validRuleIds: evidence.validRuleIds.filter((ruleId) => ruleId !== "rule_instantdeny1"),
+      rejectedRuleIds: evidence.rejectedRuleIds.filter((ruleId) => ruleId !== "rule_instantdeny1"),
+    };
+    const result = evaluatePolicies(model, incompleteEvidence, state);
+    const decision = result.decisions.find((candidate) => candidate.actionId === "proc_cancel01");
+
+    expect(decision).toMatchObject({
+      status: "review",
+      reasonCodes: expect.arrayContaining(["EVIDENCE_REJECTED"]),
+    });
+  });
+
+  it("is invariant to policy rule ordering when permits and prohibitions conflict", () => {
+    const permit = baseProcedureModelFixture.rules.find((rule) => rule.id === "rule_cancelpermit1");
+    const prohibition = baseProcedureModelFixture.rules.find((rule) => rule.id === "rule_instantdeny1");
+    if (permit === undefined || prohibition === undefined) throw new Error("Missing conflict rules");
+    const rules = [
+      ...baseProcedureModelFixture.rules,
+      { ...permit, id: "rule_cancelpermit2" },
+      { ...prohibition, id: "rule_instantdeny2" },
+    ];
+    const forwardModel = {
+      ...baseProcedureModelFixture,
+      rules,
+    };
+    const reversedModel = {
+      ...baseProcedureModelFixture,
+      rules: [...rules].reverse(),
+    };
+    expect(decisionFor(reversedModel, scheduledInstantStateFixture, "proc_cancel01")).toEqual(
+      decisionFor(forwardModel, scheduledInstantStateFixture, "proc_cancel01"),
+    );
+  });
+
   it("reports directly conflicting evidence for review", () => {
     const decision = decisionFor(conflictingEvidenceModelFixture, scheduledInstantStateFixture, "proc_cancel01");
     expect(decision.status).toBe("review");
@@ -68,6 +107,16 @@ describe("policy evaluation", () => {
       status: "forbidden",
       reasonCodes: expect.arrayContaining(["REQUIREMENT_FAILED"]),
     });
+  });
+
+  it("marks evidence with a stale snapshot binding before producing action decisions", () => {
+    const { model, evidence } = validatedArtifacts(baseProcedureModelFixture);
+    const state = UserStateSchema.parse(scheduledStandardStateFixture);
+    const result = evaluatePolicies(model, { ...evidence, snapshotHash: "differenthash0001" }, state);
+
+    expect(result.status).toBe("stale");
+    expect(result.decisions).toEqual([]);
+    expect(result.reasonCodes).toContain("SNAPSHOT_EVIDENCE_MISMATCH");
   });
 });
 

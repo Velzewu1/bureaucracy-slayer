@@ -33,6 +33,10 @@ function sameScalarType(left: JsonScalar, right: JsonScalar): boolean {
   return typeof left === typeof right;
 }
 
+function equalJsonScalar(left: JsonScalar, right: JsonScalar): boolean {
+  return left === right;
+}
+
 function atomicResult(condition: Extract<PolicyCondition, { kind: "fact" }>, facts: Readonly<Record<string, JsonScalar>>): ConditionEvaluation {
   if (!Object.prototype.hasOwnProperty.call(facts, condition.fact)) {
     return { value: "unknown", missingFacts: [condition.fact], reasonCodes: ["MISSING_FACT"] };
@@ -49,7 +53,7 @@ function atomicResult(condition: Extract<PolicyCondition, { kind: "fact" }>, fac
     if (comparableValues.length !== expectedValues.length) {
       return { value: "unknown", missingFacts: [], reasonCodes: ["TYPE_MISMATCH"] };
     }
-    const included = comparableValues.some((value) => Object.is(actual, value));
+    const included = comparableValues.some((value) => equalJsonScalar(actual, value));
     return { value: condition.op === "in" ? (included ? "true" : "false") : included ? "false" : "true", missingFacts: [], reasonCodes: [] };
   }
 
@@ -60,10 +64,10 @@ function atomicResult(condition: Extract<PolicyCondition, { kind: "fact" }>, fac
   let value: boolean;
   switch (condition.op) {
     case "eq":
-      value = Object.is(actual, condition.value);
+      value = equalJsonScalar(actual, condition.value);
       break;
     case "neq":
-      value = !Object.is(actual, condition.value);
+      value = !equalJsonScalar(actual, condition.value);
       break;
     case "lt":
       value = typeof actual === "number" && typeof condition.value === "number" && actual < condition.value;
@@ -97,10 +101,17 @@ export function evaluateCondition(
     case "all":
     case "any": {
       const results = condition.conditions.map((child) => evaluateCondition(child, facts));
+      const value =
+        condition.kind === "all"
+          ? andTruth(results.map((result) => result.value))
+          : orTruth(results.map((result) => result.value));
       return {
-        value: condition.kind === "all" ? andTruth(results.map((result) => result.value)) : orTruth(results.map((result) => result.value)),
-        missingFacts: uniqueSorted(results.flatMap((result) => result.missingFacts)),
-        reasonCodes: uniqueSorted(results.flatMap((result) => result.reasonCodes)) as ConditionEvaluation["reasonCodes"],
+        value,
+        missingFacts: value === "unknown" ? uniqueSorted(results.flatMap((result) => result.missingFacts)) : [],
+        reasonCodes:
+          value === "unknown"
+            ? (uniqueSorted(results.flatMap((result) => result.reasonCodes)) as ConditionEvaluation["reasonCodes"])
+            : [],
       };
     }
   }

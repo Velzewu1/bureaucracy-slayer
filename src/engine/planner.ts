@@ -1,5 +1,6 @@
 import {
   SafeActionPlanSchema,
+  hashCanonical,
   type ActionEvaluation,
   type EvaluationResult,
   type EvidenceResult,
@@ -101,7 +102,12 @@ function buildRoute(
   const routeDecisions = orderedActionIds
     .map((actionId) => decisions.get(actionId))
     .filter((decision): decision is ActionEvaluation => decision !== undefined);
-  const reasonCodes = [...graphReasons, ...routeDecisions.flatMap((decision) => decision.reasonCodes)];
+  const reasonCodes = [
+    ...graphReasons,
+    ...routeDecisions
+      .filter((decision) => decision.status !== "allowed")
+      .flatMap((decision) => decision.reasonCodes),
+  ];
   const missingFacts = uniqueSorted(routeDecisions.flatMap((decision) => decision.missingFacts));
   const containsUnverifiedAction = orderedActionIds.some((actionId) => !executableActions.has(actionId));
 
@@ -163,6 +169,7 @@ export function planActions(
   userState: UserState,
   context: PlannerContext,
 ): SafeActionPlan {
+  const staleReasonCodes: string[] = [];
   const bindingsAreStale =
     evidence.procedureModelId !== model.id ||
     evidence.snapshotId !== model.sourceSnapshotId ||
@@ -171,7 +178,11 @@ export function planActions(
     evaluation.evidenceResultId !== evidence.id ||
     evaluation.userStateRevision !== userState.revision ||
     evaluation.status === "stale";
-  if (bindingsAreStale) return basePlan(model, evidence, userState, context, "stale", ["ARTIFACT_MISMATCH"]);
+  if (bindingsAreStale) staleReasonCodes.push("ARTIFACT_MISMATCH");
+  if (context.userStateHash !== hashCanonical(userState)) staleReasonCodes.push("USER_STATE_HASH_MISMATCH");
+  if (staleReasonCodes.length > 0) {
+    return basePlan(model, evidence, userState, context, "stale", staleReasonCodes);
+  }
   if (evidence.status === "invalid" || evaluation.status === "review_required") {
     return basePlan(model, evidence, userState, context, "review_required", ["EVIDENCE_INVALID"]);
   }

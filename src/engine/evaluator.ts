@@ -23,7 +23,12 @@ export function evaluatePolicies(
   evidence: EvidenceResult,
   userState: UserState,
 ): EvaluationResult {
-  if (evidence.procedureModelId !== model.id) {
+  const bindingReasonCodes: string[] = [];
+  if (evidence.procedureModelId !== model.id) bindingReasonCodes.push("MODEL_EVIDENCE_MISMATCH");
+  if (evidence.snapshotId !== model.sourceSnapshotId || evidence.snapshotHash !== model.sourceSnapshotHash) {
+    bindingReasonCodes.push("SNAPSHOT_EVIDENCE_MISMATCH");
+  }
+  if (bindingReasonCodes.length > 0) {
     return EvaluationResultSchema.parse({
       schemaVersion: 1,
       procedureModelId: model.id,
@@ -31,18 +36,23 @@ export function evaluatePolicies(
       userStateRevision: userState.revision,
       status: "stale",
       decisions: [],
-      reasonCodes: ["MODEL_EVIDENCE_MISMATCH"],
+      reasonCodes: uniqueSorted(bindingReasonCodes),
     });
   }
 
   const validRules = new Set(evidence.validRuleIds);
   const rejectedRules = new Set(evidence.rejectedRuleIds);
+  const usableRules = new Set(
+    model.rules
+      .filter((rule) => validRules.has(rule.id) && !rejectedRules.has(rule.id))
+      .map((rule) => rule.id),
+  );
   const executableActions = new Set(evidence.executableProcedureActionIds);
   const decisions: ActionEvaluation[] = [];
 
   for (const action of [...model.actions].sort((left, right) => left.id.localeCompare(right.id))) {
     const actionRules = model.rules.filter((rule) => rule.actionId === action.id);
-    const rejectedActionRules = actionRules.filter((rule) => rejectedRules.has(rule.id));
+    const rejectedActionRules = actionRules.filter((rule) => !usableRules.has(rule.id));
     const reasonCodes: string[] = [];
     const missingFacts: string[] = [];
     const citationRuleIds: string[] = [];
@@ -56,7 +66,7 @@ export function evaluatePolicies(
     let typeMismatch = false;
 
     for (const rule of actionRules) {
-      if (!validRules.has(rule.id)) continue;
+      if (!usableRules.has(rule.id)) continue;
       const applicability = evaluateCondition(rule.appliesWhen, userState.facts);
       missingFacts.push(...applicability.missingFacts);
       typeMismatch ||= hasTypeMismatch(applicability);

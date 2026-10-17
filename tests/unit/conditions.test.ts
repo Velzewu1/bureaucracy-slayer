@@ -57,5 +57,30 @@ describe("three-valued logic", () => {
       reasonCodes: ["TYPE_MISMATCH"],
     });
   });
+
+  it("does not report diagnostics from an unknown branch masked by a decisive disjunction", () => {
+    const condition = PolicyConditionSchema.parse({
+      kind: "any",
+      conditions: [
+        { kind: "always" },
+        { kind: "fact", fact: "count", op: "eq", value: 1 },
+        { kind: "fact", fact: "missing", op: "eq", value: true },
+      ],
+    });
+    expect(evaluateCondition(condition, { count: "1" })).toEqual({
+      value: "true",
+      missingFacts: [],
+      reasonCodes: [],
+    });
+  });
+
+  it("uses JSON number equality so signed zero matches its canonical hash representation", () => {
+    const condition = PolicyConditionSchema.parse({ kind: "fact", fact: "amount", op: "eq", value: 0 });
+    expect(evaluateCondition(condition, { amount: -0 })).toEqual({
+      value: "true",
+      missingFacts: [],
+      reasonCodes: [],
+    });
+  });
 });
 

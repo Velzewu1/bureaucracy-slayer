@@ -63,6 +63,53 @@ describe("evidence validation", () => {
     }
   });
 
+  it("rejects a procedure action observed on a page outside the allowed origin", () => {
+    const pages = baseSnapshotFixture.pages.map((page) =>
+      page.id === "page_transfer01"
+        ? {
+            ...page,
+            url: "https://external.test/transfers/tx-001",
+            canonicalUrl: "https://external.test/transfers/tx-001",
+          }
+        : page,
+    );
+    const result = validateEvidence({ ...baseSnapshotFixture, pages }, baseProcedureModelFixture, evidenceContextFixture);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.evidence.executableProcedureActionIds).not.toContain("proc_cancel01");
+      expect(
+        result.evidence.issues.some(
+          (issue) => issue.code === "CROSS_ORIGIN_BLOCKED" && issue.procedureActionId === "proc_cancel01",
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects a rule that relies on an undeclared user fact", () => {
+    const rules = baseProcedureModelFixture.rules.map((rule) =>
+      rule.id === "rule_cancelpermit1"
+        ? {
+            ...rule,
+            appliesWhen: { kind: "fact", fact: "undeclared.flag", op: "eq", value: true },
+          }
+        : rule,
+    );
+    const result = validateEvidence(
+      baseSnapshotFixture,
+      { ...baseProcedureModelFixture, rules },
+      evidenceContextFixture,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.evidence.rejectedRuleIds).toContain("rule_cancelpermit1");
+      expect(
+        result.evidence.issues.some(
+          (issue) => issue.code === "REFERENCE_INVALID" && issue.ruleId === "rule_cancelpermit1",
+        ),
+      ).toBe(true);
+    }
+  });
+
   it("keeps exact quotation validity separate from semantic sufficiency", () => {
     const result = validateEvidence(baseSnapshotFixture, semanticReviewModelFixture, evidenceContextFixture);
     expect(result.ok).toBe(true);

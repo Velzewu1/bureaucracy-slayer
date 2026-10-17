@@ -7,6 +7,7 @@ import {
   normalizeEvidenceText,
   type EvidenceIssue,
   type EvidenceResult,
+  type PolicyCondition,
   type ProcedureModel,
   type SiteSnapshot,
 } from "../contracts/index.js";
@@ -34,6 +35,10 @@ export type EvidenceValidationContext = Readonly<{
 
 function formatZodIssues(error: z.ZodError): readonly string[] {
   return error.issues.map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`);
+}
+
+function uniqueSorted(values: readonly string[]): string[] {
+  return [...new Set(values)].sort();
 }
 
 function findDependencyCycles(model: ProcedureModel): readonly string[] {
@@ -71,6 +76,41 @@ function findDependencyCycles(model: ProcedureModel): readonly string[] {
 
 function sameOrigin(left: string, right: string): boolean {
   return new URL(left).origin === new URL(right).origin;
+}
+
+function pageIsAllowed(rootUrl: string, page: SiteSnapshot["pages"][number]): boolean {
+  return sameOrigin(rootUrl, page.url) && sameOrigin(rootUrl, page.canonicalUrl);
+}
+
+function conditionFactReferenceIssues(
+  condition: PolicyCondition,
+  factDefinitions: ReadonlyMap<string, ProcedureModel["factDefinitions"][number]>,
+): readonly string[] {
+  switch (condition.kind) {
+    case "always":
+      return [];
+    case "fact": {
+      const definition = factDefinitions.get(condition.fact);
+      if (definition === undefined) return [`Rule references undeclared fact ${condition.fact}.`];
+
+      const expectedValues = Array.isArray(condition.value) ? condition.value : [condition.value];
+      if (expectedValues.some((value) => typeof value !== definition.type)) {
+        return [`Rule comparison type does not match the definition of ${condition.fact}.`];
+      }
+      if (
+        definition.allowedValues !== undefined &&
+        definition.allowedValues.some((value) => typeof value !== definition.type)
+      ) {
+        return [`Allowed values do not match the definition type of ${condition.fact}.`];
+      }
+      return [];
+    }
+    case "not":
+      return conditionFactReferenceIssues(condition.condition, factDefinitions);
+    case "all":
+    case "any":
+      return condition.conditions.flatMap((child) => conditionFactReferenceIssues(child, factDefinitions));
+  }
 }
 
 export function validateEvidence(
@@ -114,8 +154,9 @@ export function validateEvidence(
   );
 
   const verifiedWebsiteActionIds = new Set<string>();
-  for (const { action } of websiteActions.values()) {
+  for (const { action, page } of websiteActions.values()) {
     if (!action.visible || !action.enabled) continue;
+    if (!pageIsAllowed(snapshot.rootUrl, page)) continue;
     if (action.targetUrl !== undefined && !sameOrigin(snapshot.rootUrl, action.targetUrl)) continue;
     verifiedWebsiteActionIds.add(action.id);
   }
@@ -134,6 +175,15 @@ export function validateEvidence(
         severity: "error",
         code: "ACTION_MISSING",
         message: `Procedure action ${procedureAction.id} references an unobserved website action.`,
+        procedureActionId: procedureAction.id,
+      });
+      continue;
+    }
+    if (!pageIsAllowed(snapshot.rootUrl, binding.page)) {
+      addIssue({
+        severity: "error",
+        code: "CROSS_ORIGIN_BLOCKED",
+        message: `Website action ${binding.action.id} was observed outside the allowed origin.`,
         procedureActionId: procedureAction.id,
       });
       continue;
@@ -172,13 +222,27 @@ export function validateEvidence(
 
   const validRuleIds = new Set<string>();
   const rejectedRuleIds = new Set<string>();
+  const factDefinitions = new Map(model.factDefinitions.map((definition) => [definition.key, definition]));
   for (const rule of model.rules) {
     let citationIsValid = false;
+    const factReferenceIssues = [
+      ...conditionFactReferenceIssues(rule.appliesWhen, factDefinitions),
+      ...(rule.effect === "require_condition"
+        ? conditionFactReferenceIssues(rule.requirement, factDefinitions)
+        : []),
+    ];
+    for (const message of uniqueSorted(factReferenceIssues)) {
+      addIssue({ severity: "error", code: "REFERENCE_INVALID", message, ruleId: rule.id });
+    }
 
     for (const citation of rule.citations) {
       const page = pages.get(citation.pageId);
       if (page === undefined) {
         addIssue({ severity: "error", code: "PAGE_MISSING", message: `Citation page ${citation.pageId} is absent.`, ruleId: rule.id });
+        continue;
+      }
+      if (!pageIsAllowed(snapshot.rootUrl, page)) {
+        addIssue({ severity: "error", code: "CROSS_ORIGIN_BLOCKED", message: `Citation page ${page.id} is outside the allowed origin.`, ruleId: rule.id });
         continue;
       }
       if (page.url !== citation.pageUrl) {
@@ -220,7 +284,13 @@ export function validateEvidence(
     }
 
     const actionBindingIsValid = executableProcedureActionIds.has(rule.actionId);
-    if (snapshotMatches && citationIsValid && actionBindingIsValid && !rule.needsReview) {
+    if (
+      snapshotMatches &&
+      citationIsValid &&
+      actionBindingIsValid &&
+      factReferenceIssues.length === 0 &&
+      !rule.needsReview
+    ) {
       validRuleIds.add(rule.id);
     } else {
       rejectedRuleIds.add(rule.id);
