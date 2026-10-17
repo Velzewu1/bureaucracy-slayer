@@ -201,8 +201,17 @@ export function validateFocusedSourceCatalogBindings(
 type RankedPage = Readonly<{
   page: SiteSnapshot["pages"][number];
   score: number;
+  priority: number;
   reasons: readonly string[];
   blockIndexes: ReadonlySet<number>;
+  actionIds: ReadonlySet<string>;
+}>;
+
+type IntentProfile = Readonly<{
+  purpose: string;
+  tokens: ReadonlySet<string>;
+  anchorTokens: ReadonlySet<string>;
+  primary: boolean;
 }>;
 
 const STOP_WORDS = new Set([
@@ -214,11 +223,13 @@ const STOP_WORDS = new Set([
 // These are generic policy-document signals, not domain policy. They influence
 // recall only; no signal is converted into a rule or treated as authorization.
 const POLICY_SIGNAL =
-  /\b(?:cannot|must\s+not|not\s+(?:allowed|available|eligible|guaranteed|permitted)|prohibit(?:ed|ion)?|ineligible|only|unless|except|exception|requires?|eligib(?:le|ility)|before|after|until|while|provided|warning|important|alternative|otherwise|appeal|dispute|recover(?:y)?|report|contact\s+support)\b/iu;
+  /\b(?:may|can|allowed|available|permitted|cannot|can't|must\s+not|not\s+(?:allowed|available|eligible|guaranteed|permitted)|prohibit(?:ed|ion)?|ineligible|only|unless|except|exception|requires?|eligib(?:le|ility)|before|after|until|while|provided|warning|important|alternative|otherwise|appeal|dispute|recover(?:y)?|report|contact\s+support)\b/iu;
 const PROCEDURE_SIGNAL =
   /\b(?:click|choose|select|open|submit|request|form|step|procedure|instructions?|how\s+to)\b/iu;
 const POLICY_PAGE_SIGNAL =
   /\b(?:policy|policies|rules?|terms|eligib(?:le|ility)|help|faq|support|restriction|limitation|warning|exception)\b/iu;
+const REFERENCED_POLICY_LINK_SIGNAL =
+  /\b(?:exceptions?|restrictions?|limitations?|eligib(?:le|ility)|special\s+cases|rules?)\b/iu;
 
 function canonicalToken(token: string): string {
   if (token.endsWith("ing") && token.length > 6) return token.slice(0, -3);
@@ -242,7 +253,12 @@ function normalizedTokens(value: string): ReadonlySet<string> {
 function tokenOverlap(value: string, goalTokens: ReadonlySet<string>): number {
   let count = 0;
   for (const token of normalizedTokens(value)) {
-    if (goalTokens.has(token)) count += 1;
+    if ([...goalTokens].some((goalToken) => {
+      if (token === goalToken) return true;
+      const shorter = token.length <= goalToken.length ? token : goalToken;
+      const longer = token.length <= goalToken.length ? goalToken : token;
+      return shorter.length >= 5 && longer.startsWith(shorter);
+    })) count += 1;
   }
   return count;
 }
@@ -256,37 +272,91 @@ function pageTargetIndex(snapshot: SiteSnapshot): ReadonlyMap<string, number> {
   return result;
 }
 
-function distinctiveScopeTokens(
-  snapshot: SiteSnapshot,
-  scope: ParsedGoalScopedExtraction,
-): ReadonlySet<string> {
-  const requested = normalizedTokens(
-    [scope.primaryActionPurpose, ...scope.alternativeActionPurposes].join(" "),
-  );
-  const maximumPageFrequency = Math.max(1, Math.ceil(snapshot.pages.length * 0.6));
-  const result = new Set<string>();
-  for (const token of requested) {
-    const frequency = snapshot.pages.filter((page) =>
-      normalizedTokens(
-        `${page.title} ${page.url} ${page.blocks.map((block) => block.text).join(" ")} ` +
-          page.actions.map((action) => action.label).join(" "),
-      ).has(token),
-    ).length;
-    if (frequency <= maximumPageFrequency) result.add(token);
-  }
-  return result.size > 0 ? result : requested;
+function pageSearchText(page: SiteSnapshot["pages"][number]): string {
+  return `${page.title} ${page.url} ${page.blocks.map((block) => block.text).join(" ")} ` +
+    page.actions.map((action) => action.label).join(" ");
 }
 
-function rankPages(
+function anchorTokens(snapshot: SiteSnapshot, tokens: ReadonlySet<string>): ReadonlySet<string> {
+  let minimumFrequency = Number.POSITIVE_INFINITY;
+  const frequencies = new Map<string, number>();
+  for (const token of tokens) {
+    const frequency = snapshot.pages.filter(
+      (page) => tokenOverlap(pageSearchText(page), new Set([token])) > 0,
+    ).length;
+    frequencies.set(token, frequency);
+    minimumFrequency = Math.min(minimumFrequency, frequency);
+  }
+  if (!Number.isFinite(minimumFrequency)) return tokens;
+  // Frequency only chooses anchors within one intent. Even a site-wide action
+  // term survives when it is the intent's best available anchor.
+  return new Set(
+    [...tokens].filter((token) => frequencies.get(token) === minimumFrequency),
+  );
+}
+
+function intentProfiles(
+  snapshot: SiteSnapshot,
+  scope: ParsedGoalScopedExtraction,
+): readonly IntentProfile[] {
+  return [scope.primaryActionPurpose, ...scope.alternativeActionPurposes].map(
+    (purpose, index) => {
+      const tokens = normalizedTokens(purpose);
+      return {
+        purpose,
+        tokens,
+        anchorTokens: anchorTokens(snapshot, tokens),
+        primary: index === 0,
+      };
+    },
+  );
+}
+
+function matchesIntent(value: string, intent: IntentProfile): boolean {
+  return tokenOverlap(value, intent.anchorTokens) > 0;
+}
+
+function isLikelyHeading(text: string): boolean {
+  const words = text.match(/[\p{L}\p{N}]+/gu) ?? [];
+  return words.length <= 12 && !/[.!?]["')\]]?$/u.test(text.trim());
+}
+
+function contextualBlockIndexes(
+  page: SiteSnapshot["pages"][number],
+  directIndexes: ReadonlySet<number>,
+): ReadonlySet<number> {
+  const result = new Set<number>();
+  for (const index of directIndexes) {
+    for (let candidate = index - 1; candidate <= index + 1; candidate += 1) {
+      if (candidate >= 0 && candidate < page.blocks.length) result.add(candidate);
+    }
+  }
+  for (const index of [...result]) {
+    const block = page.blocks[index];
+    if (block !== undefined && isLikelyHeading(block.text) && index + 1 < page.blocks.length) {
+      result.add(index + 1);
+    }
+  }
+  return result;
+}
+
+function isOperativePolicyText(text: string, intent: IntentProfile): boolean {
+  if (tokenOverlap(text, intent.tokens) === 0 || !POLICY_SIGNAL.test(text)) return false;
+  const words = text.match(/[\p{L}\p{N}]+/gu) ?? [];
+  const trimmed = text.trim();
+  const sentenceLike = /[.!?]["')\]]?$/u.test(trimmed) || words.length >= 14;
+  const teaser = /^(?:learn|overview|guide|how|when|where|why|what|which)\b/iu.test(trimmed) &&
+    words.length < 20;
+  // This is a structural coverage floor, never semantic validation. It keeps
+  // headings and directory teasers from making source coverage look complete.
+  return sentenceLike && !teaser;
+}
+
+function rankGeneralPages(
   snapshot: SiteSnapshot,
   userGoal: string,
-  goalScope?: ParsedGoalScopedExtraction,
 ): readonly RankedPage[] {
-  const scoped = goalScope !== undefined;
-  const goalTokens = scoped ? distinctiveScopeTokens(snapshot, goalScope) : normalizedTokens(userGoal);
-  const primaryTokens = goalScope === undefined
-    ? goalTokens
-    : distinctiveScopeTokens(snapshot, { ...goalScope, alternativeActionPurposes: [] });
+  const goalTokens = normalizedTokens(userGoal);
   const targetIndexes = pageTargetIndex(snapshot);
   const direct = snapshot.pages.map((page) => {
     const metadata = `${page.title} ${page.url}`;
@@ -298,7 +368,7 @@ function rankPages(
       const overlap = tokenOverlap(block.text, goalTokens);
       const policySignal = POLICY_SIGNAL.test(block.text);
       const procedureSignal = PROCEDURE_SIGNAL.test(block.text);
-      if (overlap > 0 || (!scoped && policyPage && (policySignal || procedureSignal))) {
+      if (overlap > 0 || (policyPage && (policySignal || procedureSignal))) {
         relevantBlocks.add(index);
         if (index > 0) relevantBlocks.add(index - 1);
         if (index + 1 < page.blocks.length) relevantBlocks.add(index + 1);
@@ -315,7 +385,7 @@ function rankPages(
       ...(metadataOverlap > 0 ? ["goal-matching page metadata"] : []),
       ...(relevantBlocks.size > 0 ? ["goal or policy-signaled evidence"] : []),
       ...(actionOverlap > 0 ? ["goal-matching observed action"] : []),
-      ...(policyPage && (!scoped || directRelevant) ? ["policy/help page metadata"] : []),
+      ...(policyPage ? ["policy/help page metadata"] : []),
     ];
     return {
       page,
@@ -340,18 +410,7 @@ function rankPages(
       if (action.targetUrl === undefined) continue;
       const targetIndex = targetIndexes.get(action.targetUrl);
       if (targetIndex === undefined) continue;
-      const sourceMetadata = `${entry.page.title} ${entry.page.url}`;
-      const sourceCanIntroduceRestrictions =
-        scoped && directIndexes.has(sourceIndex) &&
-        POLICY_PAGE_SIGNAL.test(sourceMetadata) && tokenOverlap(sourceMetadata, primaryTokens) > 0;
-      const targetMetadata = `${direct[targetIndex]?.page.title ?? ""} ${direct[targetIndex]?.page.url ?? ""}`;
-      const scopedLinkIsRelevant =
-        directIndexes.has(targetIndex) ||
-        (sourceCanIntroduceRestrictions && POLICY_PAGE_SIGNAL.test(targetMetadata));
-      if (
-        (!scoped && (directIndexes.has(sourceIndex) || directIndexes.has(targetIndex))) ||
-        (scoped && directIndexes.has(sourceIndex) && scopedLinkIsRelevant)
-      ) {
+      if (directIndexes.has(sourceIndex) || directIndexes.has(targetIndex)) {
         selectedIndexes.add(sourceIndex);
         selectedIndexes.add(targetIndex);
       }
@@ -373,12 +432,129 @@ function rankPages(
       return {
         page: entry.page,
         score: entry.score + (linked ? 1 : 0),
+        priority: 0,
         reasons: linked ? [...entry.reasons, "one-hop internal navigation"] : entry.reasons,
         blockIndexes,
+        actionIds: new Set<string>(),
       };
     })
     .filter((entry): entry is RankedPage => entry !== undefined)
     .sort((left, right) => right.score - left.score || left.page.id.localeCompare(right.page.id));
+}
+
+function rankGoalScopedPages(
+  snapshot: SiteSnapshot,
+  scope: ParsedGoalScopedExtraction,
+): readonly RankedPage[] {
+  const intents = intentProfiles(snapshot, scope);
+  const targetIndexes = pageTargetIndex(snapshot);
+  const candidates = snapshot.pages.map((page) => {
+    const directBlockIndexes = new Set<number>();
+    const actionIds = new Set<string>();
+    let score = 0;
+    let priority = Number.POSITIVE_INFINITY;
+    const reasons = new Set<string>();
+
+    intents.forEach((intent, intentIndex) => {
+      const intentPriority = intent.primary ? 0 : 1;
+      const weight = intent.primary ? 10 : 4;
+      const metadata = `${page.title} ${page.url}`;
+      if (matchesIntent(metadata, intent)) {
+        score += weight * 3;
+        priority = Math.min(priority, intentPriority);
+        reasons.add(intent.primary ? "primary-intent page metadata" : "fallback-intent page metadata");
+      }
+      page.blocks.forEach((block, blockIndex) => {
+        if (!matchesIntent(block.text, intent)) return;
+        directBlockIndexes.add(blockIndex);
+        score += weight + (POLICY_SIGNAL.test(block.text) ? weight : 0);
+        priority = Math.min(priority, intentPriority);
+        reasons.add(intent.primary ? "primary-intent evidence" : "fallback-intent evidence");
+      });
+      page.actions.forEach((action) => {
+        if (!matchesIntent(action.label, intent)) return;
+        actionIds.add(action.id);
+        score += weight * (action.kind === "link" ? 2 : 4);
+        priority = Math.min(priority, intentPriority);
+        reasons.add(
+          action.kind === "link"
+            ? "intent-matching informational navigation"
+            : "intent-matching operational control",
+        );
+      });
+      if (intentIndex === 0 && priority === 0) reasons.add("primary intent preserved");
+    });
+
+    return {
+      page,
+      score,
+      priority,
+      reasons,
+      blockIndexes: new Set(contextualBlockIndexes(page, directBlockIndexes)),
+      actionIds,
+      directRelevant: Number.isFinite(priority),
+    };
+  });
+
+  const directIndexes = new Set<number>();
+  candidates.forEach((candidate, index) => {
+    if (candidate.directRelevant) directIndexes.add(index);
+  });
+  const selectedIndexes = new Set(directIndexes);
+
+  // Follow one explicit, observed cross-page reference from a directly relevant
+  // page. The link label must itself match an intent or be named in selected
+  // context, preventing global Help/Support navigation from sweeping the site.
+  for (const sourceIndex of directIndexes) {
+    const source = candidates[sourceIndex];
+    if (source === undefined) continue;
+    const selectedText = [...source.blockIndexes]
+      .map((blockIndex) => source.page.blocks[blockIndex]?.text ?? "")
+      .join(" ");
+    for (const action of source.page.actions) {
+      if (action.kind !== "link" || action.targetUrl === undefined) continue;
+      const targetIndex = targetIndexes.get(action.targetUrl);
+      if (targetIndex === undefined || targetIndex === sourceIndex) continue;
+      const labelTokens = normalizedTokens(action.label);
+      const labelIsReferenced = labelTokens.size > 0 &&
+        tokenOverlap(selectedText, labelTokens) >= Math.min(2, labelTokens.size);
+      const matchesScopedIntent = intents.some((intent) => matchesIntent(action.label, intent));
+      const explicitlyNamesPolicyContext = REFERENCED_POLICY_LINK_SIGNAL.test(action.label);
+      if (!labelIsReferenced && !matchesScopedIntent && !explicitlyNamesPolicyContext) continue;
+      selectedIndexes.add(targetIndex);
+      source.actionIds.add(action.id);
+      source.reasons.add("observed link to relevant policy context");
+      const target = candidates[targetIndex];
+      if (target !== undefined) {
+        if (!target.directRelevant) {
+          target.priority = source.priority;
+          target.score = Math.max(target.score, source.score - 1);
+        }
+        target.reasons.add("one-hop referenced policy context");
+        if (target.blockIndexes.size === 0) {
+          target.page.blocks.forEach((_block, blockIndex) => target.blockIndexes.add(blockIndex));
+        }
+      }
+    }
+  }
+
+  return candidates
+    .map((candidate, index): RankedPage | undefined => {
+      if (!selectedIndexes.has(index)) return undefined;
+      return {
+        page: candidate.page,
+        score: candidate.score,
+        priority: candidate.priority,
+        reasons: [...candidate.reasons],
+        blockIndexes: candidate.blockIndexes,
+        actionIds: candidate.actionIds,
+      };
+    })
+    .filter((candidate): candidate is RankedPage => candidate !== undefined)
+    .sort((left, right) =>
+      left.priority - right.priority || right.score - left.score ||
+      left.page.id.localeCompare(right.page.id),
+    );
 }
 
 function originalCounts(snapshot: SiteSnapshot): FocusedSourceCatalog["originalCounts"] {
@@ -395,10 +571,10 @@ export function selectFocusedSources(
   const goalScope = goalScopeInput === undefined
     ? undefined
     : GoalScopedExtractionSchema.parse(goalScopeInput);
-  const rankedPages = rankPages(snapshot, userGoal, goalScope);
-  const goalTokens = goalScope === undefined
-    ? normalizedTokens(userGoal)
-    : distinctiveScopeTokens(snapshot, goalScope);
+  const rankedPages = goalScope === undefined
+    ? rankGeneralPages(snapshot, userGoal)
+    : rankGoalScopedPages(snapshot, goalScope);
+  const goalTokens = normalizedTokens(userGoal);
   const selectedPageUrls = new Set(
     rankedPages.flatMap((entry) => [entry.page.url, entry.page.canonicalUrl]),
   );
@@ -415,12 +591,13 @@ export function selectFocusedSources(
       .sort((left, right) => left - right)
       .map((index) => ranked.page.blocks[index])
       .filter((block): block is SiteSnapshot["pages"][number]["blocks"][number] => block !== undefined);
-    const actions = ranked.page.actions.filter(
-      (action) =>
-        tokenOverlap(action.label, goalTokens) > 0 ||
-        POLICY_SIGNAL.test(action.label) ||
-        PROCEDURE_SIGNAL.test(action.label) ||
-        (action.targetUrl !== undefined && selectedPageUrls.has(action.targetUrl)),
+    const actions = ranked.page.actions.filter((action) =>
+      goalScope === undefined
+        ? tokenOverlap(action.label, goalTokens) > 0 ||
+          POLICY_SIGNAL.test(action.label) ||
+          PROCEDURE_SIGNAL.test(action.label) ||
+          (action.targetUrl !== undefined && selectedPageUrls.has(action.targetUrl))
+        : ranked.actionIds.has(action.id),
     );
     const pageFits = selectedPages.length < pageLimit;
     const blocksFit = selectedBlocks + blocks.length <= blockLimit;
@@ -458,23 +635,23 @@ export function selectFocusedSources(
     limitations.push("No required focused page fit the configured source-selection budget.");
   }
   if (goalScope !== undefined) {
-    const primaryTokens = distinctiveScopeTokens(snapshot, {
-      ...goalScope,
-      alternativeActionPurposes: [],
-    });
-    const hasPrimaryAction = selectedPages.some((page) =>
-      page.actions.some((action) => tokenOverlap(action.label, primaryTokens) > 0),
-    );
-    const hasPrimaryPolicyEvidence = selectedPages.some((page) =>
-      page.blocks.some(
-        (block) => tokenOverlap(block.text, primaryTokens) > 0 && POLICY_SIGNAL.test(block.text),
-      ),
-    );
-    if (!hasPrimaryAction) {
-      limitations.push("No observed WebsiteAction matched the primary goal-scoped action purpose.");
-    }
-    if (!hasPrimaryPolicyEvidence) {
-      limitations.push("No selected policy evidence matched the primary goal-scoped action purpose.");
+    const intents = intentProfiles(snapshot, goalScope);
+    for (const intent of intents) {
+      const hasAction = selectedPages.some((page) =>
+        page.actions.some((action) => matchesIntent(action.label, intent)),
+      );
+      const hasOperativePolicyEvidence = selectedPages.some((page) =>
+        page.blocks.some((block) => isOperativePolicyText(block.text, intent)),
+      );
+      const scopeLabel = intent.primary
+        ? "the primary goal-scoped action purpose"
+        : `the alternative goal-scoped action purpose: ${intent.purpose}`;
+      if (!hasAction) {
+        limitations.push(`No observed WebsiteAction matched ${scopeLabel}.`);
+      }
+      if (!hasOperativePolicyEvidence) {
+        limitations.push(`No selected operative policy evidence matched ${scopeLabel}.`);
+      }
     }
   }
 
