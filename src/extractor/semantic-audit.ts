@@ -71,8 +71,13 @@ const RESTRICTION_WORDS = new Set([
 ]);
 const TEMPORAL = new Set(["after", "before", "once", "until", "when", "while", "within"]);
 const CONDITIONAL = new Set(["if", "provided", "unless"]);
-const AMBIGUOUS =
-  /\b(?:generally|in some cases|may be able|may be eligible|normally|sometimes|subject to|typically|usually|where appropriate|where possible|depending on|at (?:our|the) discretion)\b/iu;
+const AMBIGUITY_CONCERNS = [
+  ["eligibility", /\bmay be eligible\b/iu],
+  ["ability", /\bmay be able\b/iu],
+  ["dependency", /\b(?:subject to|depending on)\b/iu],
+  ["discretion", /\bat (?:our|the) discretion\b/iu],
+  ["frequency", /\b(?:generally|in some cases|normally|sometimes|typically|usually|where appropriate|where possible)\b/iu],
+] as const;
 const PERMISSION = /\b(?:allowed|can|eligible|may|permitted)\b/iu;
 const NEGATIVE_PERMISSION = /\b(?:(?:may|can)\s+not|cannot|can't|not\s+(?:allowed|eligible|permitted))\b/iu;
 const OPERATIVE_RESTRICTION =
@@ -88,6 +93,11 @@ const SYNONYMS = new Map<string, string>([
   ["owner", "user"], ["self", "user"], ["start", "initiate"], ["you", "user"],
   ["your", "user"], ["yourself", "user"],
 ]);
+
+// A permission can be quoted inside a larger sentence. The embedded subject starts after
+// the reporting predicate; words in the attribution are not policy qualifiers.
+const REPORTING_CLAUSE_BOUNDARY =
+  /\b(?:clarifies?|confirms?|describes?|explains?|indicates?|mentions?|notes?|reports?|says?|said|specifies?|states?|writes?|wrote)\b(?:\s+that\b)?/giu;
 
 function stem(token: string): string {
   let value = token.toLocaleLowerCase("en-US");
@@ -117,6 +127,12 @@ function sentences(text: string): readonly string[] {
 
 function unique<T>(values: readonly T[]): readonly T[] {
   return [...new Set(values)];
+}
+
+function ambiguityConcerns(text: string): readonly string[] {
+  return AMBIGUITY_CONCERNS
+    .filter(([, pattern]) => pattern.test(text))
+    .map(([concern]) => concern);
 }
 
 function definitionTokens(definition: FactDefinition): readonly string[] {
@@ -171,8 +187,19 @@ function conditionGuarantees(
   }
 }
 
+function subjectClause(prefix: string): string {
+  let boundary = Math.max(prefix.lastIndexOf(","), prefix.lastIndexOf(":"), prefix.lastIndexOf(";")) + 1;
+  for (const match of prefix.matchAll(REPORTING_CLAUSE_BOUNDARY)) {
+    const candidateBoundary = match.index + match[0].length;
+    const hasReportingSubject = significant(words(prefix.slice(boundary, match.index))).length > 0;
+    const hasEmbeddedSubject = significant(words(prefix.slice(candidateBoundary))).length > 0;
+    if (hasReportingSubject && hasEmbeddedSubject) boundary = candidateBoundary;
+  }
+  return prefix.slice(boundary);
+}
+
 function subjectQualifiers(prefix: string): Readonly<{ heads: readonly string[]; qualifiers: readonly Qualifier[] }> {
-  let tokens = [...words(prefix.slice(prefix.lastIndexOf(",") + 1))];
+  let tokens = [...words(subjectClause(prefix))];
   const determiner = tokens.reduce(
     (last, token, index) => (["a", "an", "any", "each", "every", "the"].includes(token) ? index : last), -1,
   );
@@ -280,6 +307,18 @@ function makeFinding(
     ruleId: rule.id, code, message: `Independent semantic audit: ${message}`,
     pageId: provenance.pageId, blockId: provenance.blockId, excerpt: provenance.excerpt,
   };
+}
+
+function findingOrderKey(finding: SemanticAuditFinding): string {
+  return `${finding.ruleId}:${finding.code}:${finding.blockId}:${finding.message}`;
+}
+
+function semanticConcernKey(finding: SemanticAuditFinding): string {
+  if (finding.code !== "AMBIGUOUS_PERMISSION_SCOPE") return findingOrderKey(finding);
+  const concerns = ambiguityConcerns(finding.excerpt);
+  return concerns.length === 0
+    ? findingOrderKey(finding)
+    : `${finding.ruleId}:${finding.code}:${concerns.join(":")}`;
 }
 
 function actionIntentTokens(action: ProcedureModel["actions"][number]): readonly string[] {
@@ -599,7 +638,7 @@ export function auditSemanticQualifiers(snapshot: SiteSnapshot, model: Procedure
           rule, citation, "NEGATED_QUALIFIER_MISMATCH",
           "the cited sentence is phrased as a negative permission or ineligibility statement.",
         ));
-        if (AMBIGUOUS.test(sentence.text)) findings.push(makeFinding(
+        if (ambiguityConcerns(sentence.text).length > 0) findings.push(makeFinding(
           rule, citation, "AMBIGUOUS_PERMISSION_SCOPE",
           "the cited permission uses unresolved hedging or discretionary scope.",
         ));
@@ -622,14 +661,15 @@ export function auditSemanticQualifiers(snapshot: SiteSnapshot, model: Procedure
     }
     findings.push(...auditExternalExceptions(snapshot, model, rule, analyzed));
   }
-  const deduplicated = new Map(findings.map((item) =>
-    [`${item.ruleId}:${item.code}:${item.blockId}:${item.message}`, item] as const,
-  ));
-  const stable = [...deduplicated.values()].sort((left, right) =>
-    `${left.ruleId}:${left.code}:${left.blockId}:${left.message}`.localeCompare(
-      `${right.ruleId}:${right.code}:${right.blockId}:${right.message}`,
-    ),
+  const ordered = [...findings].sort((left, right) =>
+    findingOrderKey(left).localeCompare(findingOrderKey(right)),
   );
+  const deduplicated = new Map<string, SemanticAuditFinding>();
+  for (const finding of ordered) {
+    const concernKey = semanticConcernKey(finding);
+    if (!deduplicated.has(concernKey)) deduplicated.set(concernKey, finding);
+  }
+  const stable = [...deduplicated.values()];
   return {
     findings: stable,
     reviewRequiredRuleIds: [...unique(stable.map((item) => item.ruleId))].sort(),

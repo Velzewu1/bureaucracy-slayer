@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
 
 import {
   ProcedureModelSchema,
@@ -37,6 +38,7 @@ import { recordedSonnetBundleInput } from "../../src/ui/generated/recordedSonnet
 import { stagedFixturesFromModel } from "./compact-fixture.js";
 
 const USER_GOAL = "Cancel this transfer or identify an evidenced recovery path.";
+const FRESH_SONNET_RECORDING = "artifacts/live-extraction-sonnet-20261017-133558.json";
 
 type FactDefinition = ProcedureModel["factDefinitions"][number];
 
@@ -76,6 +78,17 @@ function baseArtifacts(): Readonly<{ snapshot: SiteSnapshot; model: ProcedureMod
   return {
     snapshot: SiteSnapshotSchema.parse(baseSnapshotFixture),
     model: ProcedureModelSchema.parse(baseProcedureModelFixture),
+  };
+}
+
+function freshSonnetArtifacts(): Readonly<{ snapshot: SiteSnapshot; model: ProcedureModel }> {
+  const input: unknown = JSON.parse(readFileSync(FRESH_SONNET_RECORDING, "utf8"));
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new TypeError("Fresh Sonnet recording root must be an object.");
+  }
+  return {
+    snapshot: SiteSnapshotSchema.parse(Reflect.get(input, "sourceSnapshot")),
+    model: ProcedureModelSchema.parse(Reflect.get(input, "canonicalModel")),
   };
 }
 
@@ -241,6 +254,139 @@ function bindSnapshotAndModel(
 }
 
 describe("semantic qualifier audit", () => {
+  it.runIf(existsSync(FRESH_SONNET_RECORDING))(
+    "accepts the fresh qualified cancellation permit and retains one recovery ambiguity",
+    () => {
+      const artifacts = freshSonnetArtifacts();
+      const audit = auditSemanticQualifiers(artifacts.snapshot, artifacts.model);
+
+      expect(audit.findings.filter(
+        (finding) => finding.ruleId === "r_cancel_scheduled_standard_permit",
+      )).toEqual([]);
+      expect(audit.findings.filter(
+        (finding) => finding.ruleId === "r_recovery_request_permit",
+      )).toEqual([
+        expect.objectContaining({
+          code: "AMBIGUOUS_PERMISSION_SCOPE",
+          blockId: "block_4b3e165045ebe5b2a429",
+          excerpt: "Completed transfers that you started yourself may be eligible.",
+        }),
+      ]);
+
+      const validation = validateEvidence(
+        artifacts.snapshot,
+        artifacts.model,
+        evidenceContextFixture,
+        audit.findings,
+      );
+      expect(validation.ok).toBe(true);
+      if (!validation.ok) return;
+      expect(validation.evidence.validRuleIds).toContain("r_cancel_scheduled_standard_permit");
+      expect(validation.evidence.rejectedRuleIds).toEqual(["r_recovery_request_permit"]);
+    },
+  );
+
+  it.runIf(existsSync(FRESH_SONNET_RECORDING))(
+    "still rejects the fresh cancellation permit when Standard is removed",
+    () => {
+      const artifacts = freshSonnetArtifacts();
+      const model = ProcedureModelSchema.parse({
+        ...artifacts.model,
+        rules: artifacts.model.rules.map((rule) =>
+          rule.id === "r_cancel_scheduled_standard_permit" && rule.appliesWhen.kind === "all"
+            ? {
+                ...rule,
+                appliesWhen: {
+                  ...rule.appliesWhen,
+                  conditions: rule.appliesWhen.conditions.filter(
+                    (condition) => condition.kind !== "fact" || condition.fact !== "transfer_type",
+                  ),
+                },
+              }
+            : rule,
+        ),
+      });
+
+      expect(findingsFor({ snapshot: artifacts.snapshot, model }, "r_cancel_scheduled_standard_permit"))
+        .toContainEqual(expect.objectContaining({
+          code: "MISSING_QUALIFIER",
+          message: expect.stringContaining("standard"),
+        }));
+    },
+  );
+
+  it.runIf(existsSync(FRESH_SONNET_RECORDING))(
+    "keeps fresh Standard, Instant, Completed, and recovery decisions fail-closed",
+    () => {
+      const artifacts = freshSonnetArtifacts();
+      const audit = auditSemanticQualifiers(artifacts.snapshot, artifacts.model);
+      const validation = validateEvidence(
+        artifacts.snapshot,
+        artifacts.model,
+        evidenceContextFixture,
+        audit.findings,
+      );
+      expect(validation.ok).toBe(true);
+      if (!validation.ok) return;
+
+      const scenario = (
+        revision: number,
+        facts: Readonly<Record<string, string | boolean>>,
+      ) => {
+        const state = UserStateSchema.parse({ schemaVersion: 1, revision, facts });
+        const evaluation = evaluatePolicies(validation.model, validation.evidence, state);
+        const plan = planActions(validation.model, validation.evidence, evaluation, state, {
+          planId: `plan_fresh000${revision}`,
+          generatedAt: plannerContextFixture.generatedAt,
+          userStateHash: hashCanonical(state),
+        });
+        return { evaluation, plan };
+      };
+      const standard = scenario(1, {
+        transfer_status: "scheduled",
+        transfer_type: "standard",
+        processing_started: false,
+        transfer_submitted: true,
+        initiated_by_user: true,
+      });
+      const instant = scenario(2, {
+        transfer_status: "scheduled",
+        transfer_type: "instant",
+        processing_started: false,
+        transfer_submitted: true,
+        initiated_by_user: true,
+      });
+      const completed = scenario(3, {
+        transfer_status: "completed",
+        transfer_type: "standard",
+        processing_started: true,
+        transfer_submitted: true,
+        initiated_by_user: true,
+      });
+      const decision = (
+        result: ReturnType<typeof scenario>,
+        actionId: string,
+      ) => result.evaluation.decisions.find((item) => item.actionId === actionId);
+
+      expect(decision(standard, "pa_cancel_transfer")).toMatchObject({ status: "allowed" });
+      expect(standard.plan).toMatchObject({
+        status: "ready",
+        steps: [expect.objectContaining({ procedureActionId: "pa_cancel_transfer" })],
+      });
+      expect(decision(instant, "pa_cancel_transfer")).toMatchObject({
+        status: "forbidden",
+        reasonCodes: ["PROHIBITED"],
+      });
+      expect(instant.plan).toMatchObject({ status: "blocked", steps: [] });
+      expect(decision(completed, "pa_cancel_transfer")).toMatchObject({ status: "forbidden" });
+      expect(decision(completed, "pa_submit_recovery_request")).toMatchObject({
+        status: "review",
+        reasonCodes: ["EVIDENCE_REJECTED"],
+      });
+      expect(completed.plan).toMatchObject({ status: "review_required", steps: [] });
+    },
+  );
+
   it("accepts a permission when all explicit mandatory qualifiers are represented", () => {
     const source = "A scheduled standard transfer may be canceled before processing begins.";
     const artifacts = cancellationArtifacts(
@@ -387,6 +533,139 @@ describe("semantic qualifier audit", () => {
     expect(findingsFor(artifacts, "rule_recoverok01")).toContainEqual(
       expect.objectContaining({ code: "AMBIGUOUS_PERMISSION_SCOPE" }),
     );
+  });
+
+  it("does not interpret a reporting predicate as a policy qualifier", () => {
+    const artifacts = focusedActionArtifacts({
+      permitSource: "A priority application may be filed online.",
+      externalSource: "The handbook says priority applications may be filed online.",
+      actionLabel: "File application",
+      actionDescription: "File the priority application online.",
+      appliesWhen: { kind: "fact", fact: "application.class", op: "eq", value: "priority" },
+      extraDefinitions: [{
+        key: "application.class",
+        label: "Application class",
+        type: "string",
+        allowedValues: ["regular", "priority"],
+        sensitive: false,
+      }],
+    });
+
+    expect(findingsFor(artifacts, "rule_cancelpermit1")).toEqual([]);
+  });
+
+  it("still detects an omitted mandatory qualifier in an unseen policy domain", () => {
+    const artifacts = focusedActionArtifacts({
+      permitSource: "A priority application may be filed online.",
+      externalSource: "The handbook states priority applications may be filed online.",
+      actionLabel: "File application",
+      actionDescription: "File the application online.",
+      appliesWhen: { kind: "always" },
+      extraDefinitions: [{
+        key: "application.class",
+        label: "Application class",
+        type: "string",
+        allowedValues: ["regular", "priority"],
+        sensitive: false,
+      }],
+    });
+
+    expect(findingsFor(artifacts, "rule_cancelpermit1")).toContainEqual(
+      expect.objectContaining({
+        code: "MISSING_QUALIFIER",
+        message: expect.stringContaining("priority"),
+      }),
+    );
+  });
+
+  it("does not discard a status adjective that resembles a reporting predicate", () => {
+    const artifacts = focusedActionArtifacts({
+      permitSource: "A reported application may be filed online.",
+      externalSource: "Unrelated records may be viewed online.",
+      actionLabel: "File application",
+      actionDescription: "File the application online.",
+      appliesWhen: { kind: "always" },
+      extraDefinitions: [{
+        key: "application.status",
+        label: "Application status",
+        type: "string",
+        allowedValues: ["draft", "reported"],
+        sensitive: false,
+      }],
+    });
+
+    expect(findingsFor(artifacts, "rule_cancelpermit1")).toContainEqual(
+      expect.objectContaining({
+        code: "MISSING_QUALIFIER",
+        message: expect.stringContaining("report"),
+      }),
+    );
+  });
+
+  it("deduplicates repeated evidence of the same ambiguity concern", () => {
+    const first = "Completed transfers may be eligible for recovery.";
+    const second = "A completed transfer may be eligible for a recovery request.";
+    const base = recoveryArtifacts(first, {
+      kind: "fact", fact: "payment.status", op: "eq", value: "completed",
+    });
+    const snapshot = replaceBlock(base.snapshot, "block_support01", second);
+    const model = ProcedureModelSchema.parse({
+      ...base.model,
+      rules: base.model.rules.map((rule) =>
+        rule.id === "rule_recoverok01"
+          ? {
+              ...rule,
+              citations: [
+                ...rule.citations,
+                {
+                  pageId: "page_policy001",
+                  pageUrl: "https://northstar.test/help/transfers",
+                  blockId: "block_support01",
+                  excerpt: second,
+                  actionIds: [],
+                },
+              ],
+            }
+          : rule,
+      ),
+    });
+
+    expect(findingsFor({ snapshot, model }, "rule_recoverok01").filter(
+      (finding) => finding.code === "AMBIGUOUS_PERMISSION_SCOPE",
+    )).toHaveLength(1);
+  });
+
+  it("preserves distinct ambiguity concerns on separate evidence blocks", () => {
+    const first = "Completed transfers may be eligible for recovery.";
+    const second = "Completed transfers may be submitted for recovery subject to agency approval.";
+    const base = recoveryArtifacts(first, {
+      kind: "fact", fact: "payment.status", op: "eq", value: "completed",
+    });
+    const snapshot = replaceBlock(base.snapshot, "block_support01", second);
+    const model = ProcedureModelSchema.parse({
+      ...base.model,
+      rules: base.model.rules.map((rule) =>
+        rule.id === "rule_recoverok01"
+          ? {
+              ...rule,
+              citations: [
+                ...rule.citations,
+                {
+                  pageId: "page_policy001",
+                  pageUrl: "https://northstar.test/help/transfers",
+                  blockId: "block_support01",
+                  excerpt: second,
+                  actionIds: [],
+                },
+              ],
+            }
+          : rule,
+      ),
+    });
+
+    expect(findingsFor({ snapshot, model }, "rule_recoverok01").filter(
+      (finding) => finding.code === "AMBIGUOUS_PERMISSION_SCOPE",
+    )).toHaveLength(2);
   });
 
   it("does not turn unrelated restrictive text into a phantom qualifier", () => {
