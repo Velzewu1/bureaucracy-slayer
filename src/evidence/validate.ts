@@ -33,6 +33,11 @@ export type EvidenceValidationContext = Readonly<{
   checkedAt: string;
 }>;
 
+export type AdditionalSemanticReview = Readonly<{
+  ruleId: string;
+  message: string;
+}>;
+
 function formatZodIssues(error: z.ZodError): readonly string[] {
   return error.issues.map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`);
 }
@@ -117,6 +122,7 @@ export function validateEvidence(
   snapshotInput: unknown,
   modelInput: unknown,
   context: EvidenceValidationContext,
+  additionalSemanticReviews: readonly AdditionalSemanticReview[] = [],
 ): EvidenceValidationOutcome {
   const snapshotResult = SiteSnapshotSchema.safeParse(snapshotInput);
   if (!snapshotResult.success) {
@@ -224,6 +230,11 @@ export function validateEvidence(
   const rejectedRuleIds = new Set<string>();
   const factDefinitions = new Map(model.factDefinitions.map((definition) => [definition.key, definition]));
   for (const rule of model.rules) {
+    // This audit is a closed-world permission gate. It must never suppress a
+    // prohibition or requirement, even if a caller supplies an unexpected id.
+    const auditReviews = rule.effect === "permit"
+      ? additionalSemanticReviews.filter((review) => review.ruleId === rule.id)
+      : [];
     let citationIsValid = false;
     const factReferenceIssues = [
       ...conditionFactReferenceIssues(rule.appliesWhen, factDefinitions),
@@ -282,6 +293,14 @@ export function validateEvidence(
         ruleId: rule.id,
       });
     }
+    for (const review of auditReviews) {
+      addIssue({
+        severity: "error",
+        code: "SEMANTIC_REVIEW_REQUIRED",
+        message: review.message,
+        ruleId: rule.id,
+      });
+    }
 
     const actionBindingIsValid = executableProcedureActionIds.has(rule.actionId);
     if (
@@ -289,7 +308,8 @@ export function validateEvidence(
       citationIsValid &&
       actionBindingIsValid &&
       factReferenceIssues.length === 0 &&
-      !rule.needsReview
+      !rule.needsReview &&
+      auditReviews.length === 0
     ) {
       validRuleIds.add(rule.id);
     } else {

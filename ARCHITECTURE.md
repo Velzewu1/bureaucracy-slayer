@@ -72,8 +72,10 @@ flowchart LR
     S --> X[Claude structured extractor]
     U --> X
     X --> PM0[Candidate ProcedureModel]
+    PM0 --> SA[Conservative semantic qualifier audit]
+    S --> SA
     S --> V[Evidence validator]
-    PM0 --> V
+    SA --> V
     V --> ER[EvidenceResult]
     PM0 --> E[Policy evaluator]
     ER --> E
@@ -160,6 +162,14 @@ The extractor may assign semantic confidence for display and triage. No downstre
 
 There is exactly one extraction pipeline. A future adaptive mode may ask for page IDs or same-origin URLs needing more observation, then rerun the same extractor against a new complete snapshot. It is not a second policy system.
 
+#### Conservative semantic qualifier audit
+
+After the candidate model passes its canonical schema and before evidence validation admits rule IDs, extraction runs one deterministic, local audit over `permit` rules. The audit compares explicit structural signals in each exact cited permission sentence (and the containing source sentence when an excerpt is partial) with the rule's `appliesWhen` tree. It screens for category/status modifiers, temporal or conditional clauses, ownership/initiator language, negation, hedged scope, and related explicit exception blocks. A qualifier counts as represented only when every disjunctive condition branch structurally preserves it; a separately cited restrictive rule can represent a related exception.
+
+The audit never adds or rewrites a condition, changes a citation, validates a semantic interpretation, or makes a permission usable. A finding is passed to the evidence validator as internal review metadata. The validator emits the existing `SEMANTIC_REVIEW_REQUIRED` issue and rejects that permission rule from `validRuleIds`, without changing the public `ProcedureModel` or `EvidenceResult` schemas. Prohibitions are not audited away or rejected by this mechanism.
+
+This is deliberately a narrow false-negative-prone screen, not natural-language entailment and not a semantic completeness proof. It has no model/API call. Unrecognized explicit conditional scope is reported as uncertainty and requires review; source wording with no recognized structural signal can still be mistranslated without detection.
+
 ### 6.4 Evidence Validator
 
 Inputs: candidate `ProcedureModel` and the exact `SiteSnapshot` named by it. Output: `EvidenceResult`.
@@ -234,8 +244,9 @@ The UI renders structured results; it does not reinterpret policy in free-form p
 3. Zod validates the snapshot.
 4. The orchestrator sends the goal and a redacted compact snapshot to Claude.
 5. Zod parses the candidate `ProcedureModel`; malformed output fails closed.
-6. Evidence validator binds every citation and action to the snapshot and emits `EvidenceResult`.
-7. Save snapshot, candidate model, and evidence result as named demo artifacts for inspection and replay.
+6. The local semantic qualifier audit screens candidate permissions and produces internal review findings.
+7. Evidence validator binds every citation and action to the snapshot, applies audit review findings, and emits `EvidenceResult`.
+8. Save snapshot, candidate model, and evidence result as named demo artifacts for inspection and replay.
 
 ### Interactive planning flow
 
@@ -521,7 +532,8 @@ A rule is usable only when:
 - its schema and all references are valid;
 - at least one required citation binds exactly;
 - every action ID it relies on is observed; and
-- it is not marked `needsReview` for a material ambiguity.
+- it is not marked `needsReview` for a material ambiguity; and
+- the conservative semantic qualifier audit has not raised an unresolved finding for the permission.
 
 If a prohibition has valid evidence but a related permission does not, the prohibition remains enforceable. If a potentially restrictive rule has invalid evidence, do not assume freedom; produce `review_required`. This distinction prevents bad extraction from creating permission by omission.
 
@@ -781,6 +793,7 @@ Expected: pre-action re-observation cannot match the old fingerprint, marks the 
 |---|---|---|
 | Claude emits invalid JSON or IDs | Zod/evidence failure; retry once only if configured, then review | No self-healing agent loop |
 | Exact quote is present but interpretation is wrong | Show quote and semantic caveat; material ambiguity requires review | Automated validation cannot prove meaning |
+| Permission omits an explicit qualifier | Qualifier audit finding rejects that permit from usable rule IDs and requires review | Structural screening misses implicit, cross-document, highly paraphrased, or novel qualifiers and can conservatively flag unusual wording |
 | Relevant page was not collected | No invented evidence; report incomplete snapshot | Bounded same-origin crawl can miss scripted/navigation-only content |
 | Site changes after capture | Hash/fingerprint mismatch -> stale | P0 may require full re-extraction instead of partial refresh |
 | Conflicting policies | Prohibition wins operationally; report conflict | No legal precedence reasoning |
