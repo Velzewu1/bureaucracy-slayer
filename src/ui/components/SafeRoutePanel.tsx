@@ -19,8 +19,8 @@ export function SafeRoutePanel({ analysis }: SafeRoutePanelProps) {
         <div>
           <span className="section-number">03</span>
           <div>
-            <p className="eyebrow">Deterministic output</p>
-            <h2 id="route-heading">Recommended safe route</h2>
+            <p className="eyebrow">Decision status</p>
+            <h2 id="route-heading">Verified guidance</h2>
           </div>
         </div>
         <span className={`status-badge status-badge--${status.tone}`}>{status.label}</span>
@@ -40,50 +40,62 @@ export function SafeRoutePanel({ analysis }: SafeRoutePanelProps) {
       </div>
 
       {steps.length > 0 ? (
-        <ol className="route-list">
-          {steps.map((step) => (
-            <li className="route-step" key={step.procedureActionId}>
-              <span className="route-step__index">{String(step.index).padStart(2, "0")}</span>
-              <div className="route-step__body">
-                <div className="route-step__title-row">
-                  <div>
-                    <span className="step-kind">{step.actionKind.replace("_", " ")}</span>
-                    <h3>{step.title}</h3>
+        <div className="route-steps-section">
+          <div className="route-section-heading">
+            <span>Verified next steps</span>
+            <strong>{steps.length}</strong>
+          </div>
+          <ol className="route-list">
+            {steps.map((step) => (
+              <li className="route-step" key={step.procedureActionId}>
+                <span className="route-step__index">
+                  {String(step.index).padStart(2, "0")}
+                </span>
+                <div className="route-step__body">
+                  <div className="route-step__title-row">
+                    <div>
+                      <span className="step-kind">
+                        {step.actionKind.replace("_", " ")}
+                      </span>
+                      <h3>{step.title}</h3>
+                    </div>
+                    <span className="confirmation-badge">
+                      User confirmation required
+                    </span>
                   </div>
-                  <span className="confirmation-badge">User confirmation required</span>
+                  <p>{step.instruction}</p>
+                  {step.observedActionLabel === undefined ? (
+                    <div className="observed-action observed-action--human">
+                      Human-only task · no browser action
+                    </div>
+                  ) : (
+                    <div className="observed-action">
+                      <span>Observed {step.observedActionKind}</span>
+                      <strong>{step.observedActionLabel}</strong>
+                      <code>{step.websiteActionId}</code>
+                    </div>
+                  )}
+                  <details className="step-evidence">
+                    <summary>
+                      View supporting evidence ({step.citations.length})
+                    </summary>
+                    {step.citations.map((citation) => (
+                      <blockquote key={`${citation.ruleId}-${citation.pageUrl}`}>
+                        “{citation.excerpt}”
+                        <footer>
+                          <code>{citation.ruleId}</code>
+                          <a href={citation.pageUrl} target="_blank" rel="noreferrer">
+                            {citation.pageUrl}
+                          </a>
+                        </footer>
+                      </blockquote>
+                    ))}
+                  </details>
                 </div>
-                <p>{step.instruction}</p>
-                {step.observedActionLabel === undefined ? (
-                  <div className="observed-action observed-action--human">
-                    Human-only task · no browser action
-                  </div>
-                ) : (
-                  <div className="observed-action">
-                    <span>Observed {step.observedActionKind}</span>
-                    <strong>{step.observedActionLabel}</strong>
-                    <code>{step.websiteActionId}</code>
-                  </div>
-                )}
-                <details className="step-evidence">
-                  <summary>
-                    View supporting evidence ({step.citations.length})
-                  </summary>
-                  {step.citations.map((citation) => (
-                    <blockquote key={`${citation.ruleId}-${citation.pageUrl}`}>
-                      “{citation.excerpt}”
-                      <footer>
-                        <code>{citation.ruleId}</code>
-                        <a href={citation.pageUrl} target="_blank" rel="noreferrer">
-                          {citation.pageUrl}
-                        </a>
-                      </footer>
-                    </blockquote>
-                  ))}
-                </details>
-              </div>
-            </li>
-          ))}
-        </ol>
+              </li>
+            ))}
+          </ol>
+        </div>
       ) : (
         <div className="route-empty">
           <div aria-hidden="true">⌁</div>
@@ -96,7 +108,7 @@ export function SafeRoutePanel({ analysis }: SafeRoutePanelProps) {
 
       {analysis.plan.missingFacts.length > 0 ? (
         <div className="missing-facts-callout">
-          <strong>Information needed</strong>
+          <strong>Required information</strong>
           <ul>
             {analysis.plan.missingFacts.map((fact) => (
               <li key={fact}>

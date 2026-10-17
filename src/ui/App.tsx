@@ -17,6 +17,11 @@ import { DecisionIntelligencePanel } from "./components/DecisionIntelligencePane
 import { ExcludedActionsPanel } from "./components/ExcludedActionsPanel.js";
 import { PlanComparison } from "./components/PlanComparison.js";
 import { ModeSelector } from "./components/ModeSelector.js";
+import { LiveProgressPanel } from "./components/LiveProgressPanel.js";
+import {
+  PersonalizationPlaceholder,
+  type PersonalizationPlaceholderState,
+} from "./components/PersonalizationPlaceholder.js";
 import { PolicyEvidencePanel } from "./components/PolicyEvidencePanel.js";
 import { SafeRoutePanel } from "./components/SafeRoutePanel.js";
 import { UserStatePanel } from "./components/UserStatePanel.js";
@@ -92,42 +97,21 @@ function liveErrorKind(
   return "live_operational";
 }
 
-const livePhaseCopy: Readonly<
-  Record<LiveExtractionPhase, Readonly<{ eyebrow: string; title: string }>>
-> = {
-  queued: {
-    eyebrow: "Queued",
-    title: "Waiting for the bounded extraction worker…",
-  },
-  collecting: {
-    eyebrow: "Collecting",
-    title: "Observing the controlled portal with Playwright…",
-  },
-  selecting_sources: {
-    eyebrow: "Source selection",
-    title: "Selecting goal-scoped pages, evidence blocks, and actions…",
-  },
-  extracting_policy: {
-    eyebrow: "Policy extraction · Sonnet Stage 1",
-    title: "Extracting policy rules from observed sources…",
-  },
-  mapping_procedure: {
-    eyebrow: "Procedure mapping · Sonnet Stage 2",
-    title: "Mapping the policy rules to observed website actions…",
-  },
-  validating: {
-    eyebrow: "Evidence validation",
-    title: "Converting, auditing, and validating the extracted model…",
-  },
-  complete: {
-    eyebrow: "Succeeded",
-    title: "Verifying the returned artifacts again in this browser…",
-  },
-  failed: {
-    eyebrow: "Failed",
-    title: "Live extraction failed operationally.",
-  },
-};
+export function livePersonalizationState(
+  activity: Activity,
+  errorKind: ReturnType<typeof liveErrorKind> | "analysis" | "replan" | null,
+  recoveryBlocked: boolean,
+): PersonalizationPlaceholderState {
+  if (activity === "analyzing") return "identifying";
+  if (
+    recoveryBlocked ||
+    errorKind === "live_operational" ||
+    errorKind === "live_integrity"
+  ) {
+    return "unavailable";
+  }
+  return "waiting";
+}
 
 export function App({ initialMode = "verified_fixture", provider, providers }: AppProps) {
   const [workspace, setWorkspace] = useState(() => createModeWorkspaceState(initialMode));
@@ -495,7 +479,15 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
                 onFactChange={changeFact}
                 onReplan={() => void replan()}
               />
-            ) : null}
+            ) : (
+              <PersonalizationPlaceholder
+                state={livePersonalizationState(
+                  activity,
+                  workspace.errorKind,
+                  isLiveRecoveryBlocked,
+                )}
+              />
+            )}
             {workspace.mode === "verified_fixture" ? (
               <div className="scenario-context">
                 <span>{selectedScenario.experiment}</span>
@@ -551,35 +543,27 @@ export function App({ initialMode = "verified_fixture", provider, providers }: A
 
           <div className="results-column">
             {isBusy ? (
-              <section className="panel progress-panel" aria-live="polite">
-                <div className="progress-track">
-                  <span />
-                </div>
-                <p className="eyebrow">
-                  {activity === "replanning"
-                    ? "Deterministic replan"
-                    : workspace.mode === "live_sonnet"
-                      ? livePhaseCopy[liveProgress ?? "queued"].eyebrow
-                      : "Fixture analysis"}
-                </p>
-                <h2>
-                  {activity === "replanning"
-                    ? "Re-evaluating rules against your updated facts…"
-                    : workspace.mode === "live_sonnet"
-                      ? livePhaseCopy[liveProgress ?? "queued"].title
+              workspace.mode === "live_sonnet" && activity === "analyzing" ? (
+                <LiveProgressPanel
+                  phase={liveProgress ?? "queued"}
+                  onStop={stopLivePolling}
+                />
+              ) : (
+                <section className="panel progress-panel" aria-live="polite">
+                  <div className="progress-track" aria-hidden="true">
+                    <span />
+                  </div>
+                  <p className="eyebrow">
+                    {activity === "replanning" ? "Deterministic replan" : "Fixture analysis"}
+                  </p>
+                  <h2>
+                    {activity === "replanning"
+                      ? "Re-evaluating rules against your updated facts…"
                       : "Binding website actions to policy evidence…"}
-                </h2>
-                <p>
-                  {workspace.mode === "live_sonnet" && activity === "analyzing"
-                    ? "Live extraction is running now. Progress is phase-based; no completion estimate is available."
-                    : "No financial action is being executed."}
-                </p>
-                {workspace.mode === "live_sonnet" && activity === "analyzing" ? (
-                  <button className="button button--secondary" type="button" onClick={stopLivePolling}>
-                    Stop watching
-                  </button>
-                ) : null}
-              </section>
+                  </h2>
+                  <p>No financial action is being executed.</p>
+                </section>
+              )
             ) : workspace.analysis === null ? (
               <section className="panel empty-results">
                 <div className="empty-results__graphic" aria-hidden="true">

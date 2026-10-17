@@ -97,7 +97,12 @@ export function beginModeAnalysis(current: ModeWorkspaceState): ModeWorkspaceSta
   return {
     ...current,
     ...(current.mode === "live_sonnet"
-      ? { analysis: null, originalAnalysis: null, isDirty: false }
+      ? {
+          analysis: null,
+          originalAnalysis: null,
+          userState: { schemaVersion: 1, revision: 0, facts: {} },
+          isDirty: false,
+        }
       : {}),
     error: null,
     errorKind: null,
@@ -114,7 +119,12 @@ export function failModeAnalysis(
   return {
     ...current,
     ...(current.mode === "live_sonnet"
-      ? { analysis: null, originalAnalysis: null, isDirty: false }
+      ? {
+          analysis: null,
+          originalAnalysis: null,
+          userState: { schemaVersion: 1, revision: 0, facts: {} },
+          isDirty: false,
+        }
       : {}),
     error: message,
     errorKind,
