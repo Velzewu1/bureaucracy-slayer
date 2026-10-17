@@ -341,9 +341,13 @@ export async function listenLiveExtractionServer(
 export function createDefaultLiveExtractionJobManager(
   options: Omit<LiveExtractionJobManagerOptions, "runner"> = {},
 ): LiveExtractionJobManager {
+  const environment = process.env;
   return new LiveExtractionJobManager({
     ...options,
-    runner: createLiveExtractionRunner(),
+    runner: createLiveExtractionRunner({
+      environment,
+      allowedPortalUrl: environment["COLLECTOR_TEST_URL"] ?? "",
+    }),
   });
 }
 

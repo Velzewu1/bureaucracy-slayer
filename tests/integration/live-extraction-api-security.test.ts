@@ -388,6 +388,23 @@ describe("live extraction request and mock HTTP security", () => {
     ]);
   });
 
+  it("binds every fake status to the accepted browser-generated request ID", async () => {
+    const api = await mockApi();
+    const browserRequestId = "request_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const start = await fetch(`${api.origin}/api/live-extraction/jobs`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(createLiveStartRequestFixture(browserRequestId)),
+    });
+    expect(start.status).toBe(202);
+
+    const response = await fetch(
+      `${api.origin}/api/live-extraction/jobs/${LIVE_TEST_JOB_ID}`,
+    );
+    const status = LiveExtractionJobStatusSchema.parse(await response.json());
+    expect(status.requestId).toBe(browserRequestId);
+  });
+
   it("distinguishes unknown, expired, and syntactically invalid jobs", async () => {
     const expiredId = "job_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
     const api = await mockApi({ expiredJobIds: [expiredId] });

@@ -79,6 +79,7 @@ describe("live extraction composition", () => {
     const phases: LiveExtractionRunningPhase[] = [];
     const runner = createLiveExtractionRunner({
       environment: ENVIRONMENT,
+      allowedPortalUrl: LIVE_EXTRACTION_TEST_PORTAL_URL,
       collect,
       createTransport,
       extract,
@@ -279,6 +280,7 @@ describe("live extraction composition", () => {
       const fixture = liveExtractionArtifact();
       const runner = createLiveExtractionRunner({
         environment: ENVIRONMENT,
+        allowedPortalUrl: LIVE_EXTRACTION_TEST_PORTAL_URL,
         collect: () => Promise.resolve(fixture.sourceSnapshot),
         createTransport: () => Promise.resolve(transport),
         extract: () => Promise.resolve(failure),
@@ -297,6 +299,9 @@ describe("live extraction composition", () => {
       if (!(caught instanceof LiveExtractionPipelineError)) return;
       expect(caught.failure.code).toBe(expectedCode);
       expect(caught.failure.issueCodes).toEqual([failure.code]);
+      if (failure.code === "CLAUDE_REQUEST_FAILED") {
+        expect(caught.failure.retryable).toBe(false);
+      }
       for (const issue of failure.issues) {
         expect(JSON.stringify(caught.failure)).not.toContain(issue);
       }
@@ -323,6 +328,7 @@ describe("live extraction composition", () => {
   ) => {
     const runner = createLiveExtractionRunner({
       environment: ENVIRONMENT,
+      allowedPortalUrl: LIVE_EXTRACTION_TEST_PORTAL_URL,
       createTransport: () => Promise.resolve(transport),
       collect: () =>
         Promise.reject(
@@ -353,13 +359,24 @@ describe("live extraction composition", () => {
     expect(JSON.stringify(caught.failure)).not.toContain("secret");
   });
 
-  it("rejects any configured portal override before collection", async () => {
+  it.each([
+    "http://127.0.0.1:5180/",
+    "http://127.0.0.1:5180/private",
+    "http://localhost:5180/dashboard",
+    "http://[::1]:5180/dashboard",
+    "https://127.0.0.1:5180/dashboard",
+    "http://127.0.0.1:9999/dashboard",
+    "http://127.0.0.1:5180/dashboard?next=/private",
+    "http://127.0.0.1:5180/dashboard#fragment",
+    "http://user:password@127.0.0.1:5180/dashboard",
+  ])("rejects non-P0 portal target %s before collection", async (portalUrl) => {
     const collect = vi.fn();
     const runner = createLiveExtractionRunner({
       environment: {
         ...ENVIRONMENT,
-        COLLECTOR_TEST_URL: "http://127.0.0.1:9999/private",
+        COLLECTOR_TEST_URL: portalUrl,
       },
+      allowedPortalUrl: LIVE_EXTRACTION_TEST_PORTAL_URL,
       collect,
     });
 
@@ -370,6 +387,36 @@ describe("live extraction composition", () => {
       failure: { code: "CONFIGURATION_INVALID" },
     });
     expect(collect).not.toHaveBeenCalled();
+  });
+
+  it("accepts an equivalently normalized exact P0 portal target", async () => {
+    const fixture = liveExtractionArtifact();
+    const collect = vi.fn(() => Promise.resolve(fixture.sourceSnapshot));
+    const runner = createLiveExtractionRunner({
+      environment: ENVIRONMENT,
+      allowedPortalUrl: "http://127.0.0.1:5180/a/../dashboard",
+      collect,
+      createTransport: () => Promise.resolve(transport),
+      extract: (_snapshot, goal, options) => Promise.resolve({
+        ok: true,
+        status: "review_required",
+        model: fixture.procedureModel,
+        evidence: fixture.evidence,
+        attempts: 2,
+        sourceSelection: selectFocusedSources(
+          fixture.sourceSnapshot,
+          String(goal),
+          options.sourceSelectionBudget,
+          options.goalScope,
+        ),
+      }),
+    });
+
+    await expect(runner({
+      deadlineAtMs: Date.now() + 180_000,
+      setPhase: () => undefined,
+    })).resolves.toMatchObject({ portalUrl: LIVE_EXTRACTION_TEST_PORTAL_URL });
+    expect(collect).toHaveBeenCalledTimes(1);
   });
 
   it("bounds each sequential Claude call by the remaining overall deadline", async () => {
@@ -392,6 +439,7 @@ describe("live extraction composition", () => {
     };
     const runner = createLiveExtractionRunner({
       environment: ENVIRONMENT,
+      allowedPortalUrl: LIVE_EXTRACTION_TEST_PORTAL_URL,
       collect: () => Promise.resolve(fixture.sourceSnapshot),
       createTransport: () => Promise.resolve(boundedTransport),
       now: () => new Date(currentMs),

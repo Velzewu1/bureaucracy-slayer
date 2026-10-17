@@ -43,6 +43,8 @@ type Environment = Readonly<Record<string, string | undefined>>;
 
 export type LiveExtractionPipelineDependencies = Readonly<{
   environment?: Environment;
+  /** Server-owned exact collection target, captured when the runner is created. */
+  allowedPortalUrl: string;
   collect?: (options: CollectorOptions) => Promise<SiteSnapshot>;
   extract?: (
     snapshot: unknown,
@@ -68,14 +70,11 @@ function pipelineFailure(
   return new LiveExtractionPipelineError(failure);
 }
 
-function configuredPortal(environment: Environment): Readonly<{
-  portalUrl: string;
-  portalOrigin: string;
-}> | undefined {
-  const configuredPortal = environment["COLLECTOR_TEST_URL"]?.trim();
-  if (configuredPortal === undefined || configuredPortal.length === 0) return undefined;
+function safePortalUrl(value: string | undefined): URL | undefined {
+  const candidate = value?.trim();
+  if (candidate === undefined || candidate.length === 0) return undefined;
   try {
-    const url = new URL(configuredPortal);
+    const url = new URL(candidate);
     if (
       url.protocol !== "http:" ||
       url.hostname !== "127.0.0.1" ||
@@ -87,16 +86,34 @@ function configuredPortal(environment: Environment): Readonly<{
     ) {
       return undefined;
     }
-    return { portalUrl: url.href, portalOrigin: url.origin };
+    return url;
   } catch {
     return undefined;
   }
 }
 
-function configuration(environment: Environment): LiveConfiguration {
+function configuredPortal(
+  environment: Environment,
+  allowedPortalUrl: string | undefined,
+): Readonly<{
+  portalUrl: string;
+  portalOrigin: string;
+}> | undefined {
+  const allowed = safePortalUrl(allowedPortalUrl);
+  const configured = safePortalUrl(environment["COLLECTOR_TEST_URL"]);
+  if (allowed === undefined || configured === undefined || configured.href !== allowed.href) {
+    return undefined;
+  }
+  return { portalUrl: configured.href, portalOrigin: configured.origin };
+}
+
+function configuration(
+  environment: Environment,
+  allowedPortalUrl: string | undefined,
+): LiveConfiguration {
   const apiKey = environment["ANTHROPIC_API_KEY"]?.trim();
   const model = environment["ANTHROPIC_MODEL"]?.trim();
-  const portal = configuredPortal(environment);
+  const portal = configuredPortal(environment, allowedPortalUrl);
   const tokenResult =
     model === undefined || model.length === 0
       ? undefined
@@ -254,7 +271,9 @@ function extractionFailure(outcome: ExtractionFailure): LiveExtractionPipelineEr
           stage === "procedure_mapping"
             ? "Procedure mapping transport failed."
             : "Policy extraction transport failed.",
-        retryable: true,
+        // Extraction failures do not expose structured provider retryability.
+        // Fail closed instead of inviting another paid request after a permanent error.
+        retryable: false,
         issueCodes,
       });
     }
@@ -368,9 +387,12 @@ function defaultEvidenceResultId(): string {
 }
 
 export function createLiveExtractionRunner(
-  dependencies: LiveExtractionPipelineDependencies = {},
+  dependencies: LiveExtractionPipelineDependencies,
 ): LiveExtractionRunner {
   const environment = dependencies.environment ?? process.env;
+  // Capture the trusted startup target once. Tests and alternate composition
+  // roots can inject it without hardcoding a mock-portal route in production.
+  const allowedPortalUrl = dependencies.allowedPortalUrl;
   const collect = dependencies.collect ?? collectWebsite;
   const extract = dependencies.extract ?? extractProcedure;
   const createTransport = dependencies.createTransport ?? createAnthropicTransport;
@@ -379,7 +401,7 @@ export function createLiveExtractionRunner(
     dependencies.createEvidenceResultId ?? defaultEvidenceResultId;
 
   return async (context): Promise<LiveExtractionArtifact> => {
-    const configured = configuration(environment);
+    const configured = configuration(environment, allowedPortalUrl);
     let transport: ClaudeTransport;
     try {
       transport = await createTransport({

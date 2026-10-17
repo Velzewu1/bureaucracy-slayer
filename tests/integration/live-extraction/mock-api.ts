@@ -45,6 +45,7 @@ type StartLiveMockApiOptions = Readonly<{
   timeline?: readonly LiveExtractionJobStatus[];
   rawTimeline?: readonly unknown[];
   expiredJobIds?: readonly string[];
+  port?: number;
 }>;
 
 function writeJson(
@@ -221,7 +222,11 @@ export async function startLiveMockApi(
         const status = timeline[Math.min(statusIndex, timeline.length - 1)];
         if (status === undefined) throw new Error("The validated mock timeline unexpectedly became empty.");
         statusIndex += 1;
-        writeJson(response, 200, status);
+        writeJson(
+          response,
+          200,
+          isRecord(status) ? { ...status, requestId: acceptedRequestId } : status,
+        );
         return;
       }
 
@@ -252,7 +257,7 @@ export async function startLiveMockApi(
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(options.port ?? 0, "127.0.0.1", () => {
       server.off("error", reject);
       resolve();
     });

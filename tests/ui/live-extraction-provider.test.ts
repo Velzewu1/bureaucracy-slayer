@@ -192,12 +192,12 @@ function recordedLiveArtifact(): LiveExtractionArtifact {
   });
 }
 
-function startResponse() {
+function startResponse(responseJobId: string = jobId) {
   return {
     schemaVersion: 1,
-    jobId,
+    jobId: responseJobId,
     state: "queued",
-    statusUrl: `/api/live-extraction/jobs/${jobId}`,
+    statusUrl: `/api/live-extraction/jobs/${responseJobId}`,
     pollAfterMs: 1_000,
   };
 }
@@ -234,11 +234,14 @@ function status(
   };
 }
 
-function succeeded(artifact: LiveExtractionArtifact) {
+function succeeded(
+  artifact: LiveExtractionArtifact,
+  identity: Readonly<{ jobId: string; requestId: string }> = { jobId, requestId },
+) {
   return {
     schemaVersion: 1,
-    jobId,
-    requestId,
+    jobId: identity.jobId,
+    requestId: identity.requestId,
     state: "succeeded",
     phase: "complete",
     createdAt,
@@ -370,6 +373,56 @@ describe("LiveExtractionProvider", () => {
     expect(duplicate).toBe(first);
     await expect(first).resolves.toMatchObject({ mode: "live_sonnet" });
     expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+  });
+
+  it("retains only the latest successful live session", async () => {
+    const nextRequestId = "request_cccccccccccccccccccccccccccccccc" as const;
+    const nextJobId = "job_dddddddddddddddddddddddddddddddd" as const;
+    const responses = [
+      jsonResponse(startResponse(), 202),
+      jsonResponse(succeeded(demoLiveArtifact())),
+      jsonResponse(startResponse(nextJobId), 202),
+      jsonResponse(
+        succeeded(demoLiveArtifact(), {
+          jobId: nextJobId,
+          requestId: nextRequestId,
+        }),
+      ),
+    ];
+    const fetch = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
+        const response = responses.shift();
+        if (response === undefined) throw new Error("Unexpected test fetch");
+        return response;
+      },
+    );
+    const requestIds = [requestId, nextRequestId];
+    const provider = new LiveExtractionProvider({
+      fetch,
+      generateRequestId: () => {
+        const next = requestIds.shift();
+        if (next === undefined) throw new Error("Unexpected request ID generation");
+        return next;
+      },
+      now: fixedNow,
+      wait: async () => {},
+    });
+
+    const first = await provider.analyze(request());
+    const second = await provider.analyze(request());
+
+    expect(second.sessionId).not.toBe(first.sessionId);
+    await expect(provider.getEvidence(second.sessionId)).resolves.toEqual(second.evidence);
+    await expect(
+      provider.replan(second.sessionId, scheduledInstantState),
+    ).resolves.toMatchObject({ sessionId: second.sessionId });
+    await expect(provider.getEvidence(first.sessionId)).rejects.toMatchObject({
+      code: "SESSION_MISSING",
+    });
+    await expect(
+      provider.replan(first.sessionId, scheduledInstantState),
+    ).rejects.toMatchObject({ code: "SESSION_MISSING" });
+    expect(fetch.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(2);
   });
 
   it("rejects malformed start and polling responses", async () => {

@@ -6,12 +6,7 @@ The Live Sonnet demo uses three loopback-only processes:
 | --- | --- | --- |
 | UI | `http://127.0.0.1:5173` | `npm run dev:ui` |
 | Mock portal | `http://127.0.0.1:5180` | `npm run portal:dev` |
-| Live extraction API | `http://127.0.0.1:5190` | `npm run dev:server` (reserved; added by the backend owner with the server entrypoint) |
-
-At contract baseline `404d503`, the backend entrypoint and `dev:server` package script do not
-exist. The command name and port above are the integration handoff; do not substitute a guessed
-entrypoint. Until the backend implementation is merged, use the offline mock API harness in
-`tests/integration/live-extraction/`.
+| Live extraction API | `http://127.0.0.1:5190` | `npm run dev:server` |
 
 ## Install
 
@@ -50,8 +45,7 @@ fixed goal.
 
 ## Run the three processes
 
-After the backend owner lands and verifies `dev:server`, open three terminals from the repository
-root:
+Open three terminals from the repository root:
 
 ```powershell
 # Terminal 1
@@ -79,6 +73,25 @@ Live UI mode are available:
 ```powershell
 npx vitest run tests/integration/live-extraction-api-security.test.ts --configLoader runner
 ```
+
+The combined offline integration suite is also available as:
+
+```powershell
+npm run test:live-integration
+```
+
+For browser verification without an Anthropic call, replace the real API command in Terminal 2
+with the schema-valid deterministic mock:
+
+```powershell
+npm run dev:mock-api
+```
+
+The UI still uses the same Vite proxy and Live provider. The mock advances through every progress
+phase and returns the existing sanitized recorded artifact; it is test tooling and never imports
+credentials or the Anthropic SDK.
+
+To exercise the terminal operational-error UI instead, use `npm run dev:mock-api:failed`.
 
 Phase 2 browser tests should keep using fake transports by default. A live paid extraction is
 permitted only as a separate, explicit rehearsal after all offline checks pass.

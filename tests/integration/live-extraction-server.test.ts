@@ -291,10 +291,75 @@ describe("live extraction loopback API", () => {
 
     const invalidId = await apiFetch(`${baseUrl}/api/live-extraction/jobs/not-a-job`);
     expect(invalidId.status).toBe(400);
+    expect(LiveExtractionErrorResponseSchema.parse(await invalidId.json())).toMatchObject({
+      error: { code: "REQUEST_INVALID" },
+    });
     const missing = await apiFetch(
       `${baseUrl}/api/live-extraction/jobs/job_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`,
     );
     expect(missing.status).toBe(404);
+  });
+
+  it("keeps the physical worker occupied after an HTTP-visible timeout and discards its late result", async () => {
+    const clock = new ManualJobClock();
+    const pending = deferred<ReturnType<typeof liveExtractionArtifact>>();
+    const runner = vi
+      .fn<() => Promise<ReturnType<typeof liveExtractionArtifact>>>()
+      .mockImplementationOnce(() => pending.promise)
+      .mockImplementationOnce(() => Promise.resolve(liveExtractionArtifact()));
+    const manager = new LiveExtractionJobManager({
+      runner,
+      clock,
+      timeoutMs: 1_000,
+    });
+    const { baseUrl } = await startServer(manager);
+
+    const startResponse = await apiFetch(`${baseUrl}/api/live-extraction/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: startBody("request_11111111111111111111111111111111"),
+    });
+    const started = LiveExtractionStartResponseSchema.parse(await startResponse.json());
+    await flushMicrotasks();
+
+    clock.advanceBy(1_000);
+    const timedOutResponse = await fetch(`${baseUrl}${started.statusUrl}`, {
+      headers: { "Sec-Fetch-Site": "same-origin" },
+    });
+    expect(timedOutResponse.status).toBe(200);
+    expect(LiveExtractionJobStatusSchema.parse(await timedOutResponse.json())).toMatchObject({
+      state: "failed",
+      error: { code: "JOB_TIMED_OUT", stage: "timeout" },
+    });
+
+    const occupiedResponse = await apiFetch(`${baseUrl}/api/live-extraction/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: startBody("request_22222222222222222222222222222222"),
+    });
+    expect(occupiedResponse.status).toBe(409);
+    expect(LiveExtractionErrorResponseSchema.parse(await occupiedResponse.json())).toMatchObject({
+      error: { code: "JOB_ALREADY_RUNNING" },
+    });
+
+    pending.resolve(liveExtractionArtifact());
+    await flushMicrotasks();
+    const lateResultResponse = await fetch(`${baseUrl}${started.statusUrl}`, {
+      headers: { "Sec-Fetch-Site": "same-origin" },
+    });
+    expect(LiveExtractionJobStatusSchema.parse(await lateResultResponse.json())).toMatchObject({
+      state: "failed",
+      error: { code: "JOB_TIMED_OUT" },
+    });
+
+    const replacementResponse = await apiFetch(`${baseUrl}/api/live-extraction/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: startBody("request_22222222222222222222222222222222"),
+    });
+    expect(replacementResponse.status).toBe(202);
+    await flushMicrotasks();
+    expect(runner).toHaveBeenCalledTimes(2);
   });
 
   it("sanitizes unexpected failures before returning them to polling clients", async () => {
@@ -359,5 +424,55 @@ describe("live extraction loopback API", () => {
       headers: { "Sec-Fetch-Site": "same-origin" },
     });
     expect(missing.status).toBe(404);
+  });
+
+  it("enforces terminal-result and tombstone bounds through the HTTP API", async () => {
+    const runner = vi.fn(() => Promise.resolve(liveExtractionArtifact()));
+    const manager = new LiveExtractionJobManager({
+      runner,
+      terminalResultLimit: 1,
+      tombstoneLimit: 2,
+    });
+    const { baseUrl } = await startServer(manager);
+    const requestIds = [
+      "request_11111111111111111111111111111111",
+      "request_22222222222222222222222222222222",
+      "request_33333333333333333333333333333333",
+      "request_44444444444444444444444444444444",
+    ] as const;
+    const starts: Array<ReturnType<typeof LiveExtractionStartResponseSchema.parse>> = [];
+
+    for (const requestId of requestIds) {
+      const response = await apiFetch(`${baseUrl}/api/live-extraction/jobs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: startBody(requestId),
+      });
+      expect(response.status).toBe(202);
+      starts.push(LiveExtractionStartResponseSchema.parse(await response.json()));
+      await flushMicrotasks();
+    }
+
+    const expectedStatuses = [404, 410, 410, 200] as const;
+    for (const [index, start] of starts.entries()) {
+      const response = await fetch(`${baseUrl}${start.statusUrl}`, {
+        headers: { "Sec-Fetch-Site": "same-origin" },
+      });
+      expect(response.status).toBe(expectedStatuses[index]);
+    }
+
+    const retainedTombstone = starts[1];
+    if (retainedTombstone === undefined) throw new Error("Expected a retained tombstone fixture.");
+    const duplicate = await apiFetch(`${baseUrl}/api/live-extraction/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: startBody(requestIds[1]),
+    });
+    expect(duplicate.status).toBe(202);
+    expect(LiveExtractionStartResponseSchema.parse(await duplicate.json())).toMatchObject({
+      jobId: retainedTombstone.jobId,
+      state: "succeeded",
+    });
+    expect(runner).toHaveBeenCalledTimes(requestIds.length);
   });
 });

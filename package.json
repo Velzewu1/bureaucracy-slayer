@@ -11,16 +11,20 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --configLoader runner",
     "test:watch": "vitest",
-    "demo": "tsx scripts/demo.ts",
+    "demo": "node --require ./scripts/tsx-windows-user-shim.cjs --import tsx ./scripts/demo.ts",
     "portal:dev": "npm --prefix mock-portal run dev",
     "portal:build": "npm --prefix mock-portal run build",
     "portal:preview": "npm --prefix mock-portal run preview",
-    "test:live-extract": "tsx scripts/live-extraction.ts",
+    "dev:server": "node --require ./scripts/tsx-windows-user-shim.cjs --import tsx ./src/server/live-extraction-server.ts",
+    "dev:mock-api": "node --require ./scripts/tsx-windows-user-shim.cjs --import tsx ./scripts/mock-live-extraction-server.ts",
+    "dev:mock-api:failed": "npm run dev:mock-api -- --failed",
+    "test:live-extract": "node --require ./scripts/tsx-windows-user-shim.cjs --import tsx ./scripts/live-extraction.ts",
     "build:recorded": "node --require ./scripts/tsx-windows-user-shim.cjs --import tsx ./scripts/build-recorded-extraction-bundle.ts",
     "dev:ui": "vite --config vite.ui.config.ts --configLoader runner",
     "build:ui": "npm run build:recorded && vite build --config vite.ui.config.ts --configLoader runner",
     "preview:ui": "vite preview --config vite.ui.config.ts --configLoader runner",
-    "test:ui": "vitest run tests/ui --configLoader runner"
+    "test:ui": "vitest run tests/ui --configLoader runner",
+    "test:live-integration": "vitest run tests/integration/live-extraction-api-security.test.ts tests/integration/live-extraction-premerge.test.ts tests/integration/live-extraction-server.test.ts --configLoader runner"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.135.0",

@@ -200,7 +200,7 @@ export class LiveExtractionProvider implements DemoDataProvider {
   readonly #generateRequestId: () => LiveExtractionRequestId;
   readonly #now: () => string;
   readonly #wait: WaitImplementation;
-  readonly #sessions = new Map<string, LiveSession>();
+  #session: LiveSession | undefined;
   #activeRequest: ActiveRequest | undefined;
   #operation: Operation | undefined;
   #inFlight: Promise<DemoAnalysis> | undefined;
@@ -439,7 +439,7 @@ export class LiveExtractionProvider implements DemoDataProvider {
         id: `session_${job.jobId.slice("job_".length)}`,
         verified,
       };
-      this.#sessions.set(session.id, session);
+      this.#session = session;
       return this.#buildAnalysis(session, request.userState);
     } catch (error) {
       if (isAbortError(error)) {
@@ -530,8 +530,8 @@ export class LiveExtractionProvider implements DemoDataProvider {
   }
 
   async replan(sessionId: string, userState: UserState): Promise<DemoAnalysis> {
-    const session = this.#sessions.get(sessionId);
-    if (session === undefined) {
+    const session = this.#session;
+    if (session === undefined || session.id !== sessionId) {
       throw new LiveExtractionClientError(
         "SESSION_MISSING",
         "The live extraction session is no longer available.",
@@ -541,8 +541,8 @@ export class LiveExtractionProvider implements DemoDataProvider {
   }
 
   async getEvidence(sessionId: string): Promise<EvidenceResult> {
-    const session = this.#sessions.get(sessionId);
-    if (session === undefined) {
+    const session = this.#session;
+    if (session === undefined || session.id !== sessionId) {
       throw new LiveExtractionClientError(
         "SESSION_MISSING",
         "The live extraction session is no longer available.",
