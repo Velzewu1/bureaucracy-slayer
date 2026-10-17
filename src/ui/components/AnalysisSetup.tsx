@@ -7,6 +7,9 @@ type AnalysisSetupProps = Readonly<{
   selectedScenarioId: DemoScenarioId;
   isBusy: boolean;
   hasAnalysis: boolean;
+  goalLocked?: boolean;
+  showScenarios?: boolean;
+  lockedGoalNote?: string;
   onGoalChange: (goal: string) => void;
   onScenarioChange: (scenarioId: DemoScenarioId) => void;
 }>;
@@ -18,6 +21,9 @@ export function AnalysisSetup({
   selectedScenarioId,
   isBusy,
   hasAnalysis,
+  goalLocked = false,
+  showScenarios = true,
+  lockedGoalNote,
   onGoalChange,
   onScenarioChange,
 }: AnalysisSetupProps) {
@@ -45,8 +51,11 @@ export function AnalysisSetup({
         value={goal}
         onChange={(event) => onGoalChange(event.currentTarget.value)}
         rows={3}
-        disabled={isBusy}
+        disabled={isBusy || goalLocked}
       />
+      {goalLocked && lockedGoalNote !== undefined ? (
+        <p className="field-note">{lockedGoalNote}</p>
+      ) : null}
 
       <div className="portal-field">
         <div>
@@ -56,7 +65,7 @@ export function AnalysisSetup({
         <span className="fictional-badge">Fictional test environment</span>
       </div>
 
-      <fieldset className="scenario-fieldset" disabled={isBusy}>
+      {showScenarios ? <fieldset className="scenario-fieldset" disabled={isBusy}>
         <legend>Presentation scenario</legend>
         <p>Each scenario is a recorded, schema-validated fixture run through the real deterministic engine.</p>
         <div className="scenario-grid">
@@ -80,7 +89,7 @@ export function AnalysisSetup({
             </label>
           ))}
         </div>
-      </fieldset>
+      </fieldset> : null}
     </section>
   );
 }

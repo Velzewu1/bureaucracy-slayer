@@ -27,10 +27,11 @@ The root `package.json` provides:
 ```json
 {
   "scripts": {
-    "dev:ui": "vite --config vite.ui.config.ts",
-    "build:ui": "vite build --config vite.ui.config.ts",
-    "preview:ui": "vite preview --config vite.ui.config.ts",
-    "test:ui": "vitest run tests/ui"
+    "build:recorded": "node --require ./scripts/tsx-windows-user-shim.cjs --import tsx ./scripts/build-recorded-extraction-bundle.ts",
+    "dev:ui": "vite --config vite.ui.config.ts --configLoader runner",
+    "build:ui": "npm run build:recorded && vite build --config vite.ui.config.ts --configLoader runner",
+    "preview:ui": "vite preview --config vite.ui.config.ts --configLoader runner",
+    "test:ui": "vitest run tests/ui --configLoader runner"
   }
 }
 ```
@@ -60,8 +61,21 @@ npm install --save-dev --save-exact @testing-library/react@16.3.0 @testing-libra
 - `replan(sessionId, userState)` returns a new canonical planner result.
 - `getEvidence(sessionId)` returns the canonical `EvidenceResult`.
 
-`FixtureDemoProvider` validates the bundled recorded artifacts and calls the
-real deterministic evaluator and planner. Its user-state replanning is genuine;
-its saved website snapshot and extracted procedure model are not live
-Playwright/Claude results. A future HTTP provider can implement the same
-interface without changing presentation components.
+`FixtureDemoProvider` remains the default, hand-checked demonstration.
+`RecordedExtractionProvider` is a separate mode bound to the exact goal and
+portal from the saved Sonnet run. The build step validates the three source
+artifacts, replays their staged conversion, runs the semantic qualifier audit,
+and writes only the sanitized bundle in `generated/recordedSonnetBundle.ts`.
+At runtime the provider recomputes hashes, audit findings, evidence, evaluation,
+and planning; it never calls Anthropic or Playwright.
+
+To run the two-mode demo locally:
+
+```powershell
+npm.cmd run build:recorded
+npm.cmd run dev:ui
+```
+
+The **Recorded Sonnet extraction** selector is intentionally locked to its
+recorded goal and local snapshot URL. Changing user facts performs only bounded,
+deterministic replanning and cannot clear semantic-review gates.

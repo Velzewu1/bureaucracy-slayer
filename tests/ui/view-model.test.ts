@@ -71,7 +71,7 @@ describe("UI view models", () => {
     );
 
     expect(rejectedRuleCards).not.toHaveLength(0);
-    expect(rejectedRuleCards.every((card) => card.status === "rejected")).toBe(
+    expect(rejectedRuleCards.every((card) => card.status === "citation_mismatch")).toBe(
       true,
     );
     expect(

@@ -59,6 +59,16 @@ export function DecisionIntelligencePanel({
         </p>
       </div>
 
+      {analysis.evidence.issues.some((issue) => issue.code === "SEMANTIC_REVIEW_REQUIRED") ? (
+        <div className="review-boundary" data-testid="semantic-review-boundary">
+          <strong>Semantic review remains a hard gate.</strong>
+          <p>
+            Fact changes and bounded what-if checks cannot make a rejected permission usable.
+            The evaluator and planner continue to withhold the affected action.
+          </p>
+        </div>
+      ) : null}
+
       {intelligence.nextQuestion === undefined ? null : (
         <div className="next-question" data-testid="next-question">
           <span>Highest-priority next question</span>

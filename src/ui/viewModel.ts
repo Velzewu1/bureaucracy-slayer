@@ -100,32 +100,90 @@ export function describeCondition(condition: PolicyCondition): string {
   }
 }
 
+export type EvidenceCardStatus =
+  | "verified"
+  | "citation_mismatch"
+  | "invalid_binding"
+  | "semantic_review"
+  | "audit_review"
+  | "valid_unusable";
+
+const citationMismatchCodes = new Set(["EXCERPT_MISMATCH", "PAGE_MISSING", "BLOCK_MISSING"]);
+const invalidBindingCodes = new Set([
+  "ACTION_MISSING",
+  "ACTION_UNAVAILABLE",
+  "CROSS_ORIGIN_BLOCKED",
+  "REFERENCE_INVALID",
+  "DEPENDENCY_CYCLE",
+  "SNAPSHOT_MISMATCH",
+]);
+
 function evidenceStatus(
   rule: PolicyRule,
   analysis: DemoAnalysis,
-): "verified" | "rejected" | "review_required" {
-  if (rule.needsReview) return "review_required";
-  if (analysis.evidence.rejectedRuleIds.includes(rule.id)) return "rejected";
+  issueCodes: readonly string[],
+  hasAuditFinding: boolean,
+): EvidenceCardStatus {
+  if (issueCodes.some((code) => citationMismatchCodes.has(code))) return "citation_mismatch";
+  if (issueCodes.some((code) => invalidBindingCodes.has(code))) return "invalid_binding";
+  if (hasAuditFinding) return "audit_review";
+  if (rule.needsReview || issueCodes.includes("SEMANTIC_REVIEW_REQUIRED")) {
+    return "semantic_review";
+  }
+  if (analysis.evidence.rejectedRuleIds.includes(rule.id)) return "valid_unusable";
   if (analysis.evidence.validRuleIds.includes(rule.id)) return "verified";
-  return "review_required";
+  return "valid_unusable";
 }
 
 export function evidenceCards(analysis: DemoAnalysis) {
   return analysis.model.rules.flatMap((rule) =>
-    rule.citations.map((citation) => ({
-      id: `${rule.id}:${citation.blockId}`,
-      ruleId: rule.id,
-      effect: rule.effect,
-      status: evidenceStatus(rule, analysis),
-      condition: describeCondition(rule.appliesWhen),
-      excerpt: citation.excerpt,
-      pageUrl: citation.pageUrl,
-      pageId: citation.pageId,
-      blockId: citation.blockId,
-      issueCodes: analysis.evidence.issues
+    rule.citations.map((citation) => {
+      const evidenceIssues = analysis.evidence.issues
         .filter((issue) => issue.ruleId === rule.id)
-        .map((issue) => issue.code),
-    })),
+        .filter(
+          (issue) =>
+            !citationMismatchCodes.has(issue.code) || issue.message.includes(citation.blockId),
+        );
+      const auditFindings = analysis.semanticAuditFindings.filter(
+        (finding) => finding.ruleId === rule.id,
+      );
+      const issueCodes = [...new Set(evidenceIssues.map((issue) => issue.code))];
+      const status = evidenceStatus(rule, analysis, issueCodes, auditFindings.length > 0);
+      const allIssues = [
+        ...evidenceIssues.map((issue) => ({ code: issue.code, message: issue.message })),
+        ...auditFindings.map((finding) => ({ code: finding.code, message: finding.message })),
+      ];
+      const displayedIssues = [
+        ...new Map(allIssues.map((issue) => [issue.code, issue] as const)).values(),
+      ];
+      const whyUnsafe =
+        status === "citation_mismatch"
+          ? "The quoted text could not be matched exactly to the recorded source, so this rule is unusable."
+          : status === "invalid_binding"
+            ? "The rule does not have a valid source, action, or reference binding and cannot support a safe action."
+            : status === "audit_review"
+              ? "The citation matches, but the independent audit found policy scope that the structured permission may omit."
+              : status === "semantic_review"
+                ? "The citation matches, but the extracted interpretation remains uncertain and cannot authorize this action."
+                : status === "valid_unusable"
+                  ? "The citation may match, but this rejected rule remains unusable for planning."
+                  : undefined;
+      return {
+        id: `${rule.id}:${citation.blockId}`,
+        ruleId: rule.id,
+        effect: rule.effect,
+        status,
+        condition: describeCondition(rule.appliesWhen),
+        excerpt: citation.excerpt,
+        pageUrl: citation.pageUrl,
+        pageId: citation.pageId,
+        blockId: citation.blockId,
+        issueCodes,
+        issues: displayedIssues,
+        additionalIssueCount: allIssues.length - displayedIssues.length,
+        whyUnsafe,
+      };
+    }),
   );
 }
 

@@ -7,8 +7,11 @@ type PolicyEvidencePanelProps = Readonly<{
 
 const evidenceLabels = {
   verified: "Exact citation verified",
-  rejected: "Citation rejected",
-  review_required: "Interpretation needs review",
+  citation_mismatch: "Exact citation mismatch",
+  invalid_binding: "Invalid action or reference binding",
+  semantic_review: "Exact citation · semantic review required",
+  audit_review: "Exact citation · qualifier audit review",
+  valid_unusable: "Exact citation · rule unusable",
 } as const;
 
 export function PolicyEvidencePanel({ analysis }: PolicyEvidencePanelProps) {
@@ -42,18 +45,22 @@ export function PolicyEvidencePanel({ analysis }: PolicyEvidencePanelProps) {
             <div className="evidence-card__topline">
               <span className={`evidence-status evidence-status--${card.status}`}>
                 <span aria-hidden="true">
-                  {card.status === "verified" ? "✓" : card.status === "rejected" ? "×" : "!"}
+                  {card.status === "verified"
+                    ? "✓"
+                    : card.status === "citation_mismatch" || card.status === "invalid_binding"
+                      ? "×"
+                      : "!"}
                 </span>
                 {evidenceLabels[card.status]}
               </span>
               <span className={`rule-effect rule-effect--${card.effect}`}>{card.effect.replace("_", " ")}</span>
             </div>
             <blockquote>“{card.excerpt}”</blockquote>
-            {card.status === "rejected" ? (
+            {card.whyUnsafe === undefined ? null : (
               <p className="evidence-rejection">
-                This excerpt failed deterministic binding and is not treated as verified evidence.
+                {card.whyUnsafe}
               </p>
-            ) : null}
+            )}
             <dl className="evidence-meta">
               <div>
                 <dt>Rule</dt>
@@ -88,6 +95,21 @@ export function PolicyEvidencePanel({ analysis }: PolicyEvidencePanelProps) {
                   <span key={code}>{code}</span>
                 ))}
               </div>
+            ) : null}
+            {card.issues.length > 0 ? (
+              <ul className="evidence-issue-list">
+                {card.issues.map((issue, index) => (
+                  <li key={`${issue.code}-${index}`}>
+                    <code>{issue.code}</code> {issue.message}
+                  </li>
+                ))}
+                {card.additionalIssueCount > 0 ? (
+                  <li>
+                    {card.additionalIssueCount} additional audit finding
+                    {card.additionalIssueCount === 1 ? "" : "s"} retained in the recorded bundle.
+                  </li>
+                ) : null}
+              </ul>
             ) : null}
           </article>
           ))}

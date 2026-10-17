@@ -2,32 +2,38 @@ import { useMemo, useState } from "react";
 
 import type { JsonScalar, UserState } from "../contracts/index.js";
 import { FixtureDemoProvider } from "./adapters/fixtureDemoProvider.js";
+import {
+  RecordedExtractionProvider,
+  recordedExtractionBundle,
+} from "./adapters/recordedExtractionProvider.js";
 import { AnalysisSetup } from "./components/AnalysisSetup.js";
 import { AppHeader } from "./components/AppHeader.js";
 import { DecisionIntelligencePanel } from "./components/DecisionIntelligencePanel.js";
 import { ExcludedActionsPanel } from "./components/ExcludedActionsPanel.js";
 import { PlanComparison } from "./components/PlanComparison.js";
+import { ModeSelector } from "./components/ModeSelector.js";
 import { PolicyEvidencePanel } from "./components/PolicyEvidencePanel.js";
 import { SafeRoutePanel } from "./components/SafeRoutePanel.js";
 import { UserStatePanel } from "./components/UserStatePanel.js";
 import {
-  demoGoal,
   demoProcedureModel,
   demoScenarios,
-  demoSnapshot,
 } from "./fixtures/demoArtifacts.js";
+import { createModeWorkspaceState } from "./modeState.js";
 import type {
-  DemoAnalysis,
   DemoDataProvider,
+  DemoMode,
   DemoScenario,
   DemoScenarioId,
 } from "./types.js";
 import { updateUserFact } from "./viewModel.js";
 
 const fixtureProvider = new FixtureDemoProvider({ latencyMs: 650 });
+const recordedProvider = new RecordedExtractionProvider({ latencyMs: 650 });
 
 type AppProps = Readonly<{
   provider?: DemoDataProvider;
+  providers?: Partial<Readonly<Record<DemoMode, DemoDataProvider>>>;
 }>;
 
 function scenarioById(id: DemoScenarioId): DemoScenario {
@@ -40,89 +46,107 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "The demo could not complete this request.";
 }
 
-export function App({ provider = fixtureProvider }: AppProps) {
-  const [goal, setGoal] = useState(demoGoal);
-  const [scenarioId, setScenarioId] = useState<DemoScenarioId>("dynamic-replanning");
-  const [userState, setUserState] = useState<UserState>(
-    () => scenarioById("dynamic-replanning").defaultUserState,
-  );
-  const [analysis, setAnalysis] = useState<DemoAnalysis | null>(null);
-  const [originalAnalysis, setOriginalAnalysis] = useState<DemoAnalysis | null>(null);
-  const [isDirty, setIsDirty] = useState(false);
+export function App({ provider, providers }: AppProps) {
+  const [workspace, setWorkspace] = useState(() => createModeWorkspaceState("verified_fixture"));
   const [activity, setActivity] = useState<"analyzing" | "replanning" | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const isBusy = activity !== null;
+  const activeProvider =
+    providers?.[workspace.mode] ??
+    (workspace.mode === "verified_fixture" ? provider ?? fixtureProvider : recordedProvider);
 
-  const model = analysis?.model ?? demoProcedureModel;
-  const missingFacts = analysis?.plan.missingFacts ?? [];
-  const selectedScenario = useMemo(() => scenarioById(scenarioId), [scenarioId]);
+  const model =
+    workspace.analysis?.model ??
+    (workspace.mode === "recorded_sonnet"
+      ? recordedExtractionBundle.procedureModel
+      : demoProcedureModel);
+  const missingFacts = workspace.analysis?.plan.missingFacts ?? [];
+  const selectedScenario = useMemo(
+    () => scenarioById(workspace.scenarioId),
+    [workspace.scenarioId],
+  );
+
+  function changeMode(mode: DemoMode): void {
+    if (mode === workspace.mode) return;
+    setWorkspace(createModeWorkspaceState(mode));
+    setActivity(null);
+  }
 
   function changeScenario(nextScenarioId: DemoScenarioId): void {
     const nextScenario = scenarioById(nextScenarioId);
-    setScenarioId(nextScenarioId);
-    setUserState(nextScenario.defaultUserState);
-    setAnalysis(null);
-    setOriginalAnalysis(null);
-    setIsDirty(false);
-    setError(null);
+    setWorkspace((current) => ({
+      ...current,
+      scenarioId: nextScenarioId,
+      userState: nextScenario.defaultUserState,
+      analysis: null,
+      originalAnalysis: null,
+      isDirty: false,
+      error: null,
+    }));
   }
 
   function changeGoal(nextGoal: string): void {
-    setGoal(nextGoal);
-    if (analysis !== null) {
-      setAnalysis(null);
-      setOriginalAnalysis(null);
-      setIsDirty(false);
-    }
-    setError(null);
+    if (workspace.mode === "recorded_sonnet") return;
+    setWorkspace((current) => ({
+      ...current,
+      goal: nextGoal,
+      analysis: null,
+      originalAnalysis: null,
+      isDirty: false,
+      error: null,
+    }));
   }
 
   function changeFact(key: string, value: JsonScalar | undefined): void {
-    setUserState((current) => updateUserFact(current, key, value));
-    if (analysis !== null) setIsDirty(true);
+    setWorkspace((current) => ({
+      ...current,
+      userState: updateUserFact(current.userState, key, value),
+      isDirty: current.analysis !== null,
+    }));
   }
 
   async function analyze(): Promise<void> {
     setActivity("analyzing");
-    setError(null);
+    setWorkspace((current) => ({ ...current, error: null }));
     try {
-      const result = await provider.analyze({
-        goal,
-        portalUrl: demoSnapshot.rootUrl,
-        scenarioId,
-        userState,
+      const result = await activeProvider.analyze({
+        goal: workspace.goal,
+        portalUrl: workspace.portalUrl,
+        scenarioId: workspace.scenarioId,
+        userState: workspace.userState,
       });
-      setAnalysis(result);
-      setOriginalAnalysis(result);
-      setUserState({
-        schemaVersion: 1,
-        revision: result.plan.userStateRevision,
-        facts: { ...userState.facts },
-      });
-      setIsDirty(false);
+      setWorkspace((current) => ({
+        ...current,
+        analysis: result,
+        originalAnalysis: result,
+        userState: result.userState,
+        isDirty: false,
+      }));
     } catch (caught) {
-      setError(errorMessage(caught));
+      setWorkspace((current) => ({ ...current, error: errorMessage(caught) }));
     } finally {
       setActivity(null);
     }
   }
 
   async function replan(): Promise<void> {
-    if (analysis === null) return;
+    if (workspace.analysis === null) return;
     setActivity("replanning");
-    setError(null);
+    setWorkspace((current) => ({ ...current, error: null }));
     const nextUserState: UserState = {
       schemaVersion: 1,
-      revision: analysis.plan.userStateRevision + 1,
-      facts: { ...userState.facts },
+      revision: workspace.analysis.plan.userStateRevision + 1,
+      facts: { ...workspace.userState.facts },
     };
     try {
-      const result = await provider.replan(analysis.sessionId, nextUserState);
-      setAnalysis(result);
-      setUserState(nextUserState);
-      setIsDirty(false);
+      const result = await activeProvider.replan(workspace.analysis.sessionId, nextUserState);
+      setWorkspace((current) => ({
+        ...current,
+        analysis: result,
+        userState: nextUserState,
+        isDirty: false,
+      }));
     } catch (caught) {
-      setError(errorMessage(caught));
+      setWorkspace((current) => ({ ...current, error: errorMessage(caught) }));
     } finally {
       setActivity(null);
     }
@@ -131,9 +155,9 @@ export function App({ provider = fixtureProvider }: AppProps) {
   return (
     <div className="app-shell" id="top">
       <AppHeader
-        portalName="Northstar Mock Portal"
+        portalName={workspace.analysis?.portalName ?? (workspace.mode === "recorded_sonnet" ? "Recorded Sonnet" : "Northstar Mock Portal")}
         isBusy={isBusy}
-        hasAnalysis={analysis !== null}
+        hasAnalysis={workspace.analysis !== null}
         onAnalyze={() => void analyze()}
       />
 
@@ -154,29 +178,37 @@ export function App({ provider = fixtureProvider }: AppProps) {
           </div>
         </section>
 
-        <div className="mode-notice">
-          <strong>Recorded fixture mode</strong>
+        <ModeSelector mode={workspace.mode} disabled={isBusy} onChange={changeMode} />
+
+        <div className={`mode-notice mode-notice--${workspace.mode}`} data-testid="active-mode">
+          <strong>{workspace.mode === "recorded_sonnet" ? "Recorded Sonnet extraction" : "Verified fixture"}</strong>
           <span>
-            The website snapshot and extraction are saved demo artifacts. Policy evaluation and
-            every replan run locally through the deterministic engine.
+            {workspace.mode === "recorded_sonnet"
+              ? workspace.analysis?.plan.status === "review_required" && workspace.analysis.evidence.issues.some((issue) => issue.code === "SEMANTIC_REVIEW_REQUIRED")
+                ? "Sonnet extracted a policy model, but some permissions require semantic review. Bureaucracy Slayer withheld the associated actions."
+                : "Sonnet extraction happened previously. This mode only revalidates evidence and evaluates or replans locally; it makes no model or browser calls."
+              : "This hand-checked fixture preserves the safe cancellation, prohibition, unknown-fact, replanning, and evidence-failure demonstrations."}
           </span>
         </div>
 
         <AnalysisSetup
-          goal={goal}
-          portalUrl={demoSnapshot.rootUrl}
+          goal={workspace.goal}
+          portalUrl={workspace.portalUrl}
           scenarios={demoScenarios}
-          selectedScenarioId={scenarioId}
+          selectedScenarioId={workspace.scenarioId}
           isBusy={isBusy}
-          hasAnalysis={analysis !== null}
+          hasAnalysis={workspace.analysis !== null}
+          goalLocked={workspace.mode === "recorded_sonnet"}
+          showScenarios={workspace.mode === "verified_fixture"}
+          lockedGoalNote="Locked to the exact goal and portal used for the saved extraction. Change modes to explore fixture scenarios."
           onGoalChange={changeGoal}
           onScenarioChange={changeScenario}
         />
 
-        {error === null ? null : (
+        {workspace.error === null ? null : (
           <div className="error-banner" role="alert">
             <strong>Analysis stopped</strong>
-            <span>{error}</span>
+            <span>{workspace.error}</span>
           </div>
         )}
 
@@ -184,18 +216,29 @@ export function App({ provider = fixtureProvider }: AppProps) {
           <aside>
             <UserStatePanel
               model={model}
-              userState={userState}
+              userState={workspace.userState}
               missingFacts={missingFacts}
-              isDirty={isDirty}
+              isDirty={workspace.isDirty}
               isBusy={isBusy}
               onFactChange={changeFact}
               onReplan={() => void replan()}
             />
-            <div className="scenario-context">
-              <span>{selectedScenario.experiment}</span>
-              <strong>{selectedScenario.label}</strong>
-              <p>{selectedScenario.description}</p>
-            </div>
+            {workspace.mode === "verified_fixture" ? (
+              <div className="scenario-context">
+                <span>{selectedScenario.experiment}</span>
+                <strong>{selectedScenario.label}</strong>
+                <p>{selectedScenario.description}</p>
+              </div>
+            ) : (
+              <div className="scenario-context">
+                <span>Previously recorded</span>
+                <strong>{recordedExtractionBundle.provenance.modelName}</strong>
+                <p>
+                  Recorded {new Date(recordedExtractionBundle.provenance.recordedAt).toLocaleString()}.
+                  The snapshot and model remain immutable while user facts may be replanned.
+                </p>
+              </div>
+            )}
           </aside>
 
           <div className="results-column">
@@ -214,7 +257,7 @@ export function App({ provider = fixtureProvider }: AppProps) {
                 </h2>
                 <p>No financial action is being executed.</p>
               </section>
-            ) : analysis === null ? (
+            ) : workspace.analysis === null ? (
               <section className="panel empty-results">
                 <div className="empty-results__graphic" aria-hidden="true">
                   <span>1</span>
@@ -235,14 +278,14 @@ export function App({ provider = fixtureProvider }: AppProps) {
               </section>
             ) : (
               <>
-                <SafeRoutePanel analysis={analysis} />
-                <DecisionIntelligencePanel analysis={analysis} />
-                {originalAnalysis !== null &&
-                originalAnalysis.plan.id !== analysis.plan.id ? (
-                  <PlanComparison original={originalAnalysis} current={analysis} />
+                <SafeRoutePanel analysis={workspace.analysis} />
+                <DecisionIntelligencePanel analysis={workspace.analysis} />
+                {workspace.originalAnalysis !== null &&
+                workspace.originalAnalysis.plan.id !== workspace.analysis.plan.id ? (
+                  <PlanComparison original={workspace.originalAnalysis} current={workspace.analysis} />
                 ) : null}
-                <ExcludedActionsPanel analysis={analysis} />
-                <PolicyEvidencePanel analysis={analysis} />
+                <ExcludedActionsPanel analysis={workspace.analysis} />
+                <PolicyEvidencePanel analysis={workspace.analysis} />
               </>
             )}
           </div>
@@ -254,7 +297,7 @@ export function App({ provider = fixtureProvider }: AppProps) {
         <span>
           Evidence-linked guidance is not guaranteed safety, legal advice, or authorization to act.
         </span>
-        <code>snapshot: {demoSnapshot.id}</code>
+        <code>snapshot: {workspace.analysis?.snapshot.id ?? (workspace.mode === "recorded_sonnet" ? recordedExtractionBundle.identity.snapshotId : "fixture_pending")}</code>
       </footer>
     </div>
   );

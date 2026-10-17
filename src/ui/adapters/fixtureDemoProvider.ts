@@ -81,7 +81,7 @@ export class FixtureDemoProvider implements DemoDataProvider {
 
     const analysis: Omit<DemoAnalysis, "decisionIntelligence"> = {
       sessionId: session.id,
-      mode: "recorded_fixture",
+      mode: "verified_fixture",
       replanMode: "deterministic_engine",
       goal: session.goal,
       portalName: "Northstar Mock Portal",
@@ -92,6 +92,11 @@ export class FixtureDemoProvider implements DemoDataProvider {
       evaluation,
       plan,
       userState,
+      semanticAuditFindings: [],
+      source: {
+        label: "Verified fixture",
+        extractionPreviouslyCompleted: true,
+      },
     };
     return {
       ...analysis,

@@ -7,6 +7,9 @@ import type {
   UserState,
 } from "../contracts/index.js";
 import type { DecisionIntelligence } from "../decision/index.js";
+import type { RecordedSemanticFinding } from "./recordedBundle.js";
+
+export type DemoMode = "verified_fixture" | "recorded_sonnet";
 
 export type DemoScenarioId =
   | "policy-exception"
@@ -31,7 +34,7 @@ export type AnalysisRequest = Readonly<{
 
 export type DemoAnalysis = Readonly<{
   sessionId: string;
-  mode: "recorded_fixture";
+  mode: DemoMode;
   replanMode: "deterministic_engine";
   goal: string;
   portalName: string;
@@ -43,6 +46,13 @@ export type DemoAnalysis = Readonly<{
   plan: SafeActionPlan;
   userState: UserState;
   decisionIntelligence: DecisionIntelligence;
+  semanticAuditFindings: readonly RecordedSemanticFinding[];
+  source: Readonly<{
+    label: string;
+    extractionPreviouslyCompleted: boolean;
+    modelName?: string;
+    recordedAt?: string;
+  }>;
 }>;
 
 export interface DemoDataProvider {

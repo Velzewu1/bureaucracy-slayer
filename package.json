@@ -9,17 +9,18 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --configLoader runner",
     "test:watch": "vitest",
     "demo": "tsx scripts/demo.ts",
     "portal:dev": "npm --prefix mock-portal run dev",
     "portal:build": "npm --prefix mock-portal run build",
     "portal:preview": "npm --prefix mock-portal run preview",
     "test:live-extract": "tsx scripts/live-extraction.ts",
-    "dev:ui": "vite --config vite.ui.config.ts",
-    "build:ui": "vite build --config vite.ui.config.ts",
-    "preview:ui": "vite preview --config vite.ui.config.ts",
-    "test:ui": "vitest run tests/ui"
+    "build:recorded": "node --require ./scripts/tsx-windows-user-shim.cjs --import tsx ./scripts/build-recorded-extraction-bundle.ts",
+    "dev:ui": "vite --config vite.ui.config.ts --configLoader runner",
+    "build:ui": "npm run build:recorded && vite build --config vite.ui.config.ts --configLoader runner",
+    "preview:ui": "vite preview --config vite.ui.config.ts --configLoader runner",
+    "test:ui": "vitest run tests/ui --configLoader runner"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.135.0",
