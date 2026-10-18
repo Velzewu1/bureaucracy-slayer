@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "vite";
 
 import { buildFixtureEnvelopes } from "./fixtures.js";
+import { buildGoalCatalog } from "./goal-catalog.js";
 import { renderFixtureModule } from "./render.js";
 
 /**
@@ -20,8 +21,9 @@ const dist = resolve(extensionRoot, "dist");
 
 async function main(): Promise<void> {
   const fixtures = await buildFixtureEnvelopes();
+  const goals = await buildGoalCatalog();
   mkdirSync(resolve(extensionRoot, "src/generated"), { recursive: true });
-  writeFileSync(resolve(extensionRoot, "src/generated/fixtureEnvelopes.ts"), renderFixtureModule(fixtures));
+  writeFileSync(resolve(extensionRoot, "src/generated/fixtureEnvelopes.ts"), renderFixtureModule(fixtures, goals));
   if (process.argv.includes("--fixtures-only")) return;
 
   rmSync(dist, { recursive: true, force: true });

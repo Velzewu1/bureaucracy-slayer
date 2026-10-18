@@ -22,6 +22,8 @@ function element<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+let responseSerial = 0;
+
 async function send(command: PanelCommand): Promise<PanelResponse> {
   return (await chrome.runtime.sendMessage(command)) as PanelResponse;
 }
@@ -54,6 +56,9 @@ function describeOutcome(outcome: ActionOutcome, detail: string | undefined): ty
       };
     case "no_portal_tab":
       return { text: "Open Northstar Mock Bank in a tab first.", warn: true };
+    case "unsupported_goal":
+    case "goal_required":
+      return undefined;
   }
 }
 
@@ -68,15 +73,15 @@ function statusKind(availability: GuidanceView["availability"]): string {
       return "ok";
     case "needs_information":
       return "info";
-    case "blocked":
-    case "rejected":
-      return "stop";
     case "review_required":
     case "stale":
-    case "expired":
-    case "invalidated":
-    case "superseded":
       return "hold";
+    case "blocked":
+    case "rejected":
+    case "invalidated":
+    case "expired":
+    case "superseded":
+      return "stop";
     default:
       return "idle";
   }
@@ -90,27 +95,18 @@ function renderStep(
 ): HTMLElement {
   const expanded = options.expanded;
   const kindLabel = step.kind === "navigate" ? "Opens a page" : "You do this";
-  const toggle = element("button", {
-    className: "step-toggle",
-    text: step.title,
-  });
+  const toggle = element("button", { className: "step-toggle", text: step.title });
   toggle.type = "button";
   toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
   toggle.addEventListener("click", onToggle);
 
-  const head = element("div", { className: "step-head" }, [
-    element("span", { className: "step-index", text: String(step.index) }),
-    toggle,
-    element("span", { className: `tag ${step.kind}`, text: kindLabel }),
-  ]);
-
   const buttons = element("div", { className: "actions" });
-  if (step.canOpen) {
-    const open = element("button", { className: expanded ? "primary" : "secondary", text: "Open page" });
+  if (expanded && step.canOpen) {
+    const open = element("button", { className: "primary", text: "Open page" });
     open.addEventListener("click", () => act({ type: "OPEN_STEP", index: step.index }));
     buttons.append(open);
   }
-  if (step.canShow) {
+  if (expanded && step.canShow) {
     const show = element("button", { className: "secondary", text: "Show on page" });
     show.addEventListener("click", () => act({ type: "SHOW_STEP", index: step.index }));
     buttons.append(show);
@@ -123,7 +119,7 @@ function renderStep(
     step.citations.length === 0
       ? undefined
       : element("details", { className: "sources" }, [
-          element("summary", { text: `Source${step.citations.length > 1 ? "s" : ""} (${step.citations.length})` }),
+          element("summary", { text: "View supporting evidence" }),
           ...step.citations.map((citation) =>
             element("blockquote", { text: `${citation.pageTitle || citation.pageUrl}: “${citation.excerpt}”` }),
           ),
@@ -134,35 +130,56 @@ function renderStep(
     .join(" ");
 
   return element("li", { className: classes }, [
-    options.active
-      ? element("div", { className: "next-label", text: `Step ${step.index} of ${options.total}` })
-      : undefined,
-    head,
-    expanded ? element("p", { className: "step-copy", text: step.instruction }) : undefined,
-    step.manualNote === undefined
-      ? undefined
-      : element("p", { className: "manual-note", text: expanded ? step.manualNote : "The extension will never click it." }),
-    buttons,
-    expanded ? sources : undefined,
+    element("span", { className: "step-index", text: String(step.index).padStart(2, "0") }),
+    element("div", { className: "step-body" }, [
+      options.active
+        ? element("div", { className: "next-label", text: `Step ${step.index} of ${options.total}` })
+        : undefined,
+      element("div", { className: "step-kindline" }, [
+        element("span", { className: `tag ${step.kind}`, text: kindLabel }),
+      ]),
+      toggle,
+      expanded ? element("p", { className: "step-copy", text: step.instruction }) : undefined,
+      step.manualNote === undefined
+        ? undefined
+        : element("p", {
+            className: "manual-note",
+            text: expanded ? step.manualNote : "The extension will never click it.",
+          }),
+      expanded ? sources : undefined,
+      buttons,
+    ]),
   ]);
 }
 
 function renderView(view: GuidanceView, act: (command: PanelCommand) => void): HTMLElement[] {
+  const kind = statusKind(view.availability);
   const remaining = minutes(view.remainingMs);
-  const header = element("section", { className: "card decision" }, [
+  const summary = element("section", { className: `card summary summary-${kind}` }, [
     element("p", {
-      className: `status status-${statusKind(view.availability)} ${view.availability}`,
+      className: `status status-${kind} ${view.availability}`,
       text: view.headline,
     }),
     view.goal === undefined ? undefined : element("p", { className: "goal", text: view.goal }),
     element("p", { className: "decision-copy", text: view.message }),
-    ...view.notices.map((notice) => element("div", { className: "warning", text: notice })),
+    view.sourceLabel === undefined
+      ? undefined
+      : element("p", { className: "source-line", text: view.sourceLabel }),
+    element("p", { className: "safety-line", text: "Guidance only. This extension does not click or submit anything." }),
     view.missingFactLabels.length === 0
       ? undefined
-      : element("div", { className: "warning", text: `Still needed: ${view.missingFactLabels.join(", ")}` }),
+      : element("p", { className: "needed", text: `Still needed: ${view.missingFactLabels.join(", ")}` }),
     remaining === undefined ? undefined : element("p", { className: "meta", text: remaining }),
   ]);
-  const sections: HTMLElement[] = [header];
+  const sections: HTMLElement[] = [summary];
+  if (view.notices.length > 0) {
+    sections.push(
+      element("details", { className: "reason" }, [
+        element("summary", { text: "Why this route?" }),
+        ...view.notices.map((notice) => element("p", { text: notice })),
+      ]),
+    );
+  }
   if (view.steps.length > 0) {
     const list = element("ol", { className: "steps" });
     for (const step of view.steps) {
@@ -204,8 +221,8 @@ function renderDemoControls(
   const clear = element("button", { className: "ghost", text: "Clear highlight" });
   clear.addEventListener("click", () => act({ type: "CLEAR_HIGHLIGHT" }));
   const details = element("details", { className: "demo-controls" }, [
-    element("summary", { text: "Demo controls" }),
-    element("p", { className: "demo-help", text: "Loading a scenario stands in for the Slayer app publishing a plan." }),
+    element("summary", { text: "Developer / Demo controls" }),
+    element("p", { className: "demo-help", text: "Testing only. Normal use is the goal box above. These routes are prebuilt fixtures, not a live analysis." }),
     select,
     element("div", { className: "actions" }, [load, invalidate, reset, clear]),
   ]);
@@ -216,14 +233,112 @@ function renderDemoControls(
   return details;
 }
 
+function renderPersonalization(
+  response: PanelResponse,
+  act: (command: PanelCommand) => void,
+): HTMLElement | undefined {
+  if (!response.canPersonalize) return undefined;
+  const guided = element("button", { className: response.factMode === "guided" ? "mode selected" : "mode", text: "Guided" });
+  guided.type = "button";
+  guided.setAttribute("aria-pressed", response.factMode === "guided" ? "true" : "false");
+  guided.addEventListener("click", () => act({ type: "SET_FACT_MODE", mode: "guided" }));
+  const all = element("button", { className: response.factMode === "all" ? "mode selected" : "mode", text: "All facts" });
+  all.type = "button";
+  all.setAttribute("aria-pressed", response.factMode === "all" ? "true" : "false");
+  all.addEventListener("click", () => act({ type: "SET_FACT_MODE", mode: "all" }));
+  const fields = response.questions.map((question) => {
+    const field = element("fieldset", { className: "question" }, [
+      element("legend", { text: question.label }),
+    ]);
+    for (const option of question.options) {
+      const choice = element("button", { className: "choice", text: option.label });
+      choice.type = "button";
+      choice.setAttribute("aria-pressed", question.selectedOptionId === option.id ? "true" : "false");
+      choice.addEventListener("click", () => act({ type: "ANSWER", questionId: question.id, optionId: option.id }));
+      field.append(choice);
+    }
+    return field;
+  });
+  return element("section", { className: "card facts" }, [
+    element("div", { className: "mode-toggle" }, [guided, all]),
+    fields.length === 0
+      ? element("p", { className: "demo-help", text: "Guided questions are answered. Switch to All facts to change one." })
+      : undefined,
+    ...fields,
+  ]);
+}
+
 let selectedFixture = "";
 let latest: PanelResponse | undefined;
 let expandedIndex: number | undefined;
 let demoOpen = false;
 let lastAvailability: GuidanceView["availability"] | undefined;
+let shellReady = false;
+let resultsHost: HTMLElement | undefined;
+let demoHost: HTMLElement | undefined;
+let draftGoal = "";
+let busy = false;
+
+function ensureShell(): void {
+  if (shellReady || root === null) return;
+  const label = element("label", { className: "field-label", text: "Your goal" });
+  label.htmlFor = "user-goal";
+  const input = element("textarea", { className: "goal-input" });
+  input.id = "user-goal";
+  input.maxLength = 2_000;
+  input.placeholder = "Can I cancel my scheduled bank transfer?";
+  input.value = draftGoal;
+  input.addEventListener("input", () => {
+    draftGoal = input.value;
+    feedback = undefined;
+    const serial = ++responseSerial;
+    void send({ type: "GOAL_EDITED", goal: draftGoal }).then((next) => {
+      if (serial !== responseSerial) return;
+      busy = false;
+      latest = next;
+      paint();
+    });
+  });
+  const analyze = element("button", { className: "primary", text: "Analyze Website" });
+  analyze.type = "button";
+  analyze.addEventListener("click", () => {
+    busy = true;
+    paint();
+    const serial = ++responseSerial;
+    void send({ type: "ANALYZE", goal: draftGoal }).then((next) => {
+      if (serial !== responseSerial) return;
+      busy = false;
+      feedback = describeOutcome(next.outcome, next.detail);
+      if (viewFingerprint(latest?.view ?? next.view) !== viewFingerprint(next.view)) {
+        expandedIndex = next.view.nextStepIndex;
+        lastAvailability = next.view.availability;
+      }
+      latest = next;
+      paint();
+    });
+  });
+  resultsHost = element("div", { className: "results" });
+  demoHost = element("div", { className: "demo-host" });
+  root.append(
+    element("header", { className: "brand" }, [
+      element("span", { className: "brand-mark", text: "BS" }),
+      element("div", { className: "brand-copy" }, [
+        element("strong", { text: "Bureaucracy Slayer" }),
+        element("span", { text: "Northstar Mock Bank" }),
+      ]),
+      element("span", { className: "provenance", text: "Offline fixture" }),
+    ]),
+    element("section", { className: "card goal-form" }, [label, input, analyze]),
+    resultsHost,
+    demoHost,
+  );
+  shellReady = true;
+}
 
 function paint(): void {
   if (root === null || latest === undefined) return;
+  ensureShell();
+  if (resultsHost === undefined || demoHost === undefined) return;
   const response = latest;
   if (selectedFixture === "") selectedFixture = response.fixtures[0]?.id ?? "";
   if (lastAvailability !== response.view.availability || expandedIndex === undefined) {
@@ -231,8 +346,12 @@ function paint(): void {
   }
   lastAvailability = response.view.availability;
   const act = (command: PanelCommand): void => {
+    const serial = ++responseSerial;
     void send(command).then((next) => {
+      if (serial !== responseSerial) return;
+      busy = false;
       feedback = describeOutcome(next.outcome, next.detail);
+      if (command.type === "LOAD_FIXTURE" && next.outcome !== "rejected_fixture") demoOpen = false;
       if (viewFingerprint(response.view) !== viewFingerprint(next.view)) {
         expandedIndex = next.view.nextStepIndex;
         lastAvailability = next.view.availability;
@@ -241,24 +360,26 @@ function paint(): void {
       paint();
     });
   };
-  const children: HTMLElement[] = [
-    element("header", { className: "brand" }, [
-      element("span", { className: "brand-mark", text: "BS" }),
-      element("div", { className: "brand-copy" }, [
-        element("strong", { text: "Bureaucracy Slayer" }),
-        element("span", { text: "Northstar Mock Bank" }),
-      ]),
-    ]),
-    element("p", { className: "mode-chip", text: "Demo mode · Verified fixture" }),
-    element("p", { className: "mode-note", text: "Routes come from prebuilt fixtures, not a live analysis." }),
-    ...renderView(response.view, act),
-  ];
-  if (feedback !== undefined) {
-    children.push(element("div", { className: `feedback${feedback.warn ? " warn" : ""}`, text: feedback.text }));
+  const results: HTMLElement[] = [];
+  if (busy) {
+    results.push(element("section", { className: "card" }, [
+      element("p", { className: "decision-copy", text: "Checking the offline demonstration…" }),
+    ]));
+  } else {
+    if (response.notice !== undefined) {
+      results.push(element("p", { className: "alert", text: response.notice }));
+    }
+    const personalization = renderPersonalization(response, act);
+    if (personalization !== undefined) results.push(personalization);
+    results.push(...renderView(response.view, act));
+    if (feedback !== undefined) {
+      results.push(element("div", { className: `feedback${feedback.warn ? " warn" : ""}`, text: feedback.text }));
+    }
   }
-  children.push(renderDemoControls(response.fixtures, act, selectedFixture, (id) => { selectedFixture = id; }));
-  children.push(element("p", { className: "footer", text: "Guidance only · never clicks, submits, or cancels for you." }));
-  root.replaceChildren(...children);
+  resultsHost.replaceChildren(...results);
+  demoHost.replaceChildren(renderDemoControls(response.fixtures, act, selectedFixture, (id) => {
+    selectedFixture = id;
+  }));
 }
 
 let refreshInFlight = false;
@@ -267,8 +388,10 @@ async function refresh(): Promise<void> {
   if (refreshInFlight) return;
   refreshInFlight = true;
   try {
+    const serial = responseSerial;
     const next = await send({ type: "GET_VIEW" });
-    const unchanged = latest !== undefined && viewFingerprint(latest.view) === viewFingerprint(next.view);
+    if (serial !== responseSerial) return;
+    const unchanged = latest !== undefined && viewFingerprint(latest.view) === viewFingerprint(next.view) && latest.factMode === next.factMode && latest.notice === next.notice;
     latest = next;
     if (!unchanged) paint();
     else if (root !== null && root.childElementCount === 0) paint();

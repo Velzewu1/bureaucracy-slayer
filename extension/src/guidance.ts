@@ -108,6 +108,10 @@ export type StoredSession = Readonly<{
   acceptedAtMs: number;
   invalidated: boolean;
   doneSteps: readonly number[];
+  /** Canonical goal text when this session came from exact goal lookup. */
+  acceptedGoal?: string;
+  answers?: Readonly<Record<string, string>>;
+  factMode?: "guided" | "all";
 }>;
 
 export type SessionAssessment =
@@ -306,7 +310,7 @@ const EMPTY_VIEW: Omit<GuidanceView, "availability" | "headline" | "message"> = 
 const NON_AUTHORITATIVE: Readonly<Record<"none" | "rejected" | "expired" | "invalidated" | "superseded", Readonly<{ headline: string; message: string }>>> = {
   none: {
     headline: "No guidance loaded",
-    message: "Load a demo scenario to follow a verified fixture route on Northstar.",
+    message: "Type a goal, then analyze the Northstar website. This demonstration uses offline fixtures.",
   },
   rejected: {
     headline: "Guidance rejected",
@@ -328,11 +332,11 @@ const NON_AUTHORITATIVE: Readonly<Record<"none" | "rejected" | "expired" | "inva
 
 const STATUS_COPY: Readonly<Record<PlanStatus, Readonly<{ headline: string; message: string }>>> = {
   ready: {
-    headline: "Verified fixture route",
+    headline: "Verified route",
     message: "Follow the next step. You complete every action yourself.",
   },
   needs_information: {
-    headline: "More information needed",
+    headline: "Needs information",
     message: "A route cannot be confirmed until these details are answered in Bureaucracy Slayer.",
   },
   blocked: {

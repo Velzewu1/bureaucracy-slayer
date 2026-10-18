@@ -215,7 +215,7 @@ describe("route presentation", () => {
   it("shows the verified cancellation route with one navigation step and one manual step", async () => {
     const view = buildView(await authoritative(fixture("cancel-ready")));
     expect(view.availability).toBe("ready");
-    expect(view.headline).toBe("Verified fixture route");
+    expect(view.headline).toBe("Verified route");
     expect(view.navigable).toBe(true);
     expect(view.nextStepIndex).toBe(1);
     const [open, cancel] = view.steps;

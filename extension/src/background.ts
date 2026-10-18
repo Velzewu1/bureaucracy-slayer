@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { FIXTURE_ENVELOPES } from "./generated/fixtureEnvelopes.js";
+import { GuidanceEnvelopeBodySchema, sealEnvelope, type GuidanceEnvelope } from "./envelope.js";
+import { FIXTURE_ENVELOPES, GOAL_CATALOG } from "./generated/fixtureEnvelopes.js";
 import {
   TRUSTED_ORIGINS,
   assessSession,
@@ -14,6 +15,13 @@ import {
   type SessionAssessment,
   type StoredSession,
 } from "./guidance.js";
+import {
+  lookupOutcome,
+  matchGoal,
+  parseGoalCatalog,
+  visibleQuestions,
+  UNSUPPORTED_GOAL_MESSAGE,
+} from "./goals.js";
 import {
   PanelCommandSchema,
   type ActionOutcome,
@@ -31,7 +39,10 @@ import {
 const SESSION_KEY = "slayerSession";
 const HIGHEST_KEY = "slayerHighestSequence";
 const HIGHLIGHT_TAB_KEY = "slayerHighlightTab";
+const NOTICE_KEY = "slayerNotice";
 const PANEL_PAGE = "sidepanel.html";
+const goalCatalog = parseGoalCatalog(GOAL_CATALOG);
+const UNVERIFIED_DEMO_MESSAGE = "The offline demonstration could not be verified, so no route was loaded.";
 
 const StoredSessionSchema = z
   .object({
@@ -39,9 +50,24 @@ const StoredSessionSchema = z
     acceptedAtMs: z.number(),
     invalidated: z.boolean(),
     doneSteps: z.array(z.number().int().positive()),
+    acceptedGoal: z.string().min(1).optional(),
+    answers: z.record(z.string().min(1), z.string().min(1)).optional(),
+    factMode: z.enum(["guided", "all"]).optional(),
   })
   .strict();
 const HighestSchema = z.record(z.string(), z.number().int().nonnegative());
+
+function normalizeSession(data: z.infer<typeof StoredSessionSchema>): StoredSession {
+  return {
+    envelope: data.envelope,
+    acceptedAtMs: data.acceptedAtMs,
+    invalidated: data.invalidated,
+    doneSteps: data.doneSteps,
+    ...(data.acceptedGoal === undefined ? {} : { acceptedGoal: data.acceptedGoal }),
+    ...(data.answers === undefined ? {} : { answers: data.answers }),
+    ...(data.factMode === undefined ? {} : { factMode: data.factMode }),
+  };
+}
 
 type Loaded = Readonly<{
   stored: StoredSession | undefined;
@@ -53,7 +79,7 @@ async function load(): Promise<Loaded> {
   const stored = StoredSessionSchema.safeParse(raw[SESSION_KEY]);
   const highest = HighestSchema.safeParse(raw[HIGHEST_KEY]);
   return {
-    stored: stored.success ? stored.data : undefined,
+    stored: stored.success ? normalizeSession(stored.data) : undefined,
     highest: highest.success ? highest.data : {},
   };
 }
@@ -131,13 +157,150 @@ function fixtureList(): PanelResponse["fixtures"] {
   return FIXTURE_ENVELOPES.map((fixture) => ({ id: fixture.id, label: fixture.label }));
 }
 
+async function readNotice(): Promise<string | undefined> {
+  const raw = await chrome.storage.session.get(NOTICE_KEY);
+  return typeof raw[NOTICE_KEY] === "string" ? raw[NOTICE_KEY] : undefined;
+}
+
+async function writeNotice(notice: string | undefined): Promise<void> {
+  if (notice === undefined) await chrome.storage.session.remove(NOTICE_KEY);
+  else await chrome.storage.session.set({ [NOTICE_KEY]: notice });
+}
+
 async function respond(outcome: ActionOutcome, detail?: string): Promise<PanelResponse> {
   const loaded = await load();
   const assessment = await assess(loaded);
   // A highlight must never outlive authoritative guidance.
   if (assessment.kind !== "authoritative") await clearHighlights();
   const view: GuidanceView = buildView(assessment);
-  return { view, fixtures: fixtureList(), outcome, ...(detail === undefined ? {} : { detail }) };
+  const stored = loaded.stored;
+  const entry =
+    assessment.kind === "authoritative" && stored?.acceptedGoal !== undefined
+      ? matchGoal(goalCatalog, stored.acceptedGoal)
+      : undefined;
+  const answers = stored?.answers ?? {};
+  const factMode = stored?.factMode ?? "guided";
+  const questions =
+    entry === undefined ? [] : visibleQuestions(entry, factMode, view.missingFactLabels, answers);
+  const notice = await readNotice();
+  return {
+    view,
+    fixtures: fixtureList(),
+    questions,
+    factMode,
+    canPersonalize: entry !== undefined && entry.questions.length > 0,
+    outcome,
+    ...(detail === undefined ? {} : { detail }),
+    ...(notice === undefined ? {} : { notice }),
+  };
+}
+
+async function acceptEnvelope(
+  envelope: GuidanceEnvelope,
+  goalSession: Readonly<{ acceptedGoal: string; answers: Readonly<Record<string, string>>; factMode: "guided" | "all" }>,
+): Promise<PanelResponse> {
+  const checked = await checkEnvelope(envelope, TRUSTED_ORIGINS);
+  if (!checked.ok || checked.envelope.goal !== goalSession.acceptedGoal) {
+    await clearHighlights();
+    const loaded = await load();
+    await saveSession(undefined, loaded.highest);
+    await writeNotice(UNVERIFIED_DEMO_MESSAGE);
+    return respond("unsupported_goal", "UNVERIFIED");
+  }
+  const loaded = await load();
+  const nextSequence = (loaded.highest[checked.envelope.sessionId] ?? 0) + 1;
+  const { integrity: _integrity, ...rest } = checked.envelope;
+  const sealed = await sealEnvelope(GuidanceEnvelopeBodySchema.parse({ ...rest, sequence: nextSequence }));
+  const resealed = await checkEnvelope(sealed, TRUSTED_ORIGINS);
+  if (!resealed.ok) {
+    await clearHighlights();
+    await saveSession(undefined, loaded.highest);
+    await writeNotice(UNVERIFIED_DEMO_MESSAGE);
+    return respond("unsupported_goal", "UNVERIFIED");
+  }
+  await clearHighlights();
+  await writeNotice(undefined);
+  await saveSession(
+    {
+      envelope: resealed.envelope,
+      acceptedAtMs: Date.now(),
+      invalidated: false,
+      doneSteps: [],
+      acceptedGoal: goalSession.acceptedGoal,
+      answers: goalSession.answers,
+      factMode: goalSession.factMode,
+    },
+    { ...loaded.highest, [resealed.envelope.sessionId]: nextSequence },
+  );
+  return respond("none");
+}
+
+async function analyzeGoal(goal: string): Promise<PanelResponse> {
+  const trimmed = goal.trim();
+  const loaded = await load();
+  await clearHighlights();
+  if (trimmed.length === 0) {
+    if (loaded.stored !== undefined) await saveSession({ ...loaded.stored, invalidated: true }, loaded.highest);
+    await writeNotice("Enter a goal before starting analysis.");
+    return respond("goal_required");
+  }
+  const entry = matchGoal(goalCatalog, trimmed);
+  if (entry === undefined) {
+    await saveSession(undefined, loaded.highest);
+    await writeNotice(UNSUPPORTED_GOAL_MESSAGE);
+    return respond("unsupported_goal");
+  }
+  const found = lookupOutcome(entry, {});
+  if (!found.ok) {
+    await saveSession(undefined, loaded.highest);
+    await writeNotice(UNVERIFIED_DEMO_MESSAGE);
+    return respond("unsupported_goal", found.code);
+  }
+  const envelope = await checkEnvelope(found.envelope, TRUSTED_ORIGINS);
+  if (!envelope.ok) {
+    await saveSession(undefined, loaded.highest);
+    await writeNotice(UNVERIFIED_DEMO_MESSAGE);
+    return respond("unsupported_goal", envelope.code);
+  }
+  return acceptEnvelope(envelope.envelope, { acceptedGoal: entry.goal, answers: {}, factMode: "guided" });
+}
+
+async function answerQuestion(questionId: string, optionId: string): Promise<PanelResponse> {
+  const loaded = await load();
+  const stored = loaded.stored;
+  if (stored?.acceptedGoal === undefined || stored.invalidated) return respond("denied", "NO_GOAL");
+  const entry = matchGoal(goalCatalog, stored.acceptedGoal);
+  if (entry === undefined) return respond("denied", "NO_GOAL");
+  const answers = { ...(stored.answers ?? {}), [questionId]: optionId };
+  const found = lookupOutcome(entry, answers);
+  if (!found.ok) {
+    await clearHighlights();
+    await saveSession({ ...stored, invalidated: true }, loaded.highest);
+    await writeNotice("This answer combination is not in the offline demonstration.");
+    return respond("unsupported_goal", found.code);
+  }
+  const envelope = await checkEnvelope(found.envelope, TRUSTED_ORIGINS);
+  if (!envelope.ok || envelope.envelope.goal !== stored.acceptedGoal) {
+    await clearHighlights();
+    await saveSession({ ...stored, invalidated: true }, loaded.highest);
+    await writeNotice(UNVERIFIED_DEMO_MESSAGE);
+    return respond("unsupported_goal", envelope.ok ? "GOAL_MISMATCH" : envelope.code);
+  }
+  return acceptEnvelope(envelope.envelope, {
+    acceptedGoal: stored.acceptedGoal,
+    answers,
+    factMode: stored.factMode ?? "guided",
+  });
+}
+
+async function goalEdited(goal: string): Promise<PanelResponse> {
+  const loaded = await load();
+  const stored = loaded.stored;
+  if (stored === undefined || stored.invalidated) return respond("none");
+  if (stored.acceptedGoal !== undefined && stored.acceptedGoal === goal.trim()) return respond("none");
+  await clearHighlights();
+  await saveSession({ ...stored, invalidated: true }, loaded.highest);
+  return respond("none");
 }
 
 async function loadFixture(fixtureId: string): Promise<PanelResponse> {
@@ -148,6 +311,7 @@ async function loadFixture(fixtureId: string): Promise<PanelResponse> {
   const loaded = await load();
   if (isReplay(check.envelope, loaded.highest)) return respond("rejected_fixture", "REPLAYED_SEQUENCE");
   await clearHighlights();
+  await writeNotice(undefined);
   await saveSession(
     { envelope: fixture.envelope, acceptedAtMs: Date.now(), invalidated: false, doneSteps: [] },
     { ...loaded.highest, [check.envelope.sessionId]: check.envelope.sequence },
@@ -221,6 +385,19 @@ async function handle(command: PanelCommand): Promise<PanelResponse> {
   switch (command.type) {
     case "GET_VIEW":
       return respond("none");
+    case "ANALYZE":
+      return analyzeGoal(command.goal);
+    case "GOAL_EDITED":
+      return goalEdited(command.goal);
+    case "ANSWER":
+      return answerQuestion(command.questionId, command.optionId);
+    case "SET_FACT_MODE": {
+      const loaded = await load();
+      if (loaded.stored !== undefined) {
+        await saveSession({ ...loaded.stored, factMode: command.mode }, loaded.highest);
+      }
+      return respond("none");
+    }
     case "LOAD_FIXTURE":
       return loadFixture(command.fixtureId);
     case "INVALIDATE": {
@@ -231,6 +408,7 @@ async function handle(command: PanelCommand): Promise<PanelResponse> {
     }
     case "RESET":
       await clearHighlights();
+      await writeNotice(undefined);
       await saveSession(undefined, {});
       return respond("none");
     case "OPEN_STEP":

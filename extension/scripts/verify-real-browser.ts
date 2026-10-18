@@ -18,7 +18,7 @@ import { chromium, type Page } from "playwright";
 const PORTAL = "http://127.0.0.1:5180";
 const extensionDir = resolve("extension/dist");
 const shots = resolve("extension/verification/screenshots");
-const profile = resolve("extension/.tmp/profile-verify");
+const profile = resolve("extension/.tmp/profile-verify-ui");
 mkdirSync(shots, { recursive: true });
 rmSync(profile, { recursive: true, force: true });
 
@@ -54,7 +54,7 @@ try {
   const panel = await context.newPage();
   await panel.setViewportSize({ width: 360, height: 980 });
   await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
-  await panel.getByText("Demo controls").waitFor();
+  await panel.getByText("Developer / Demo controls").waitFor();
 
   const openDemo = async () => {
     const demo = panel.locator("details.demo-controls");
@@ -72,6 +72,7 @@ try {
   await openDemo();
   await panel.getByRole("button", { name: "Reset demo" }).click();
   await panel.getByText("No guidance loaded").waitFor();
+  await panel.locator("details.demo-controls summary").click();
 
   const shot = async (page: Page, name: string) => page.screenshot({ path: resolve(shots, `${name}.png`) });
   const highlighted = () => portal.locator("[data-slayer-highlight]").count();
@@ -85,11 +86,97 @@ try {
 
   // 0. Empty state
   record("No guidance: nothing navigable offered", (await panel.getByRole("button", { name: /Open page|Show on page/ }).count()) === 0);
+  record("Goal box is on the primary screen", (await panel.getByLabel("Your goal").count()) === 1);
   await shot(panel, "01-no-guidance");
 
+  const analyze = async (goal: string) => {
+    await panel.getByLabel("Your goal").fill(goal);
+    await panel.getByRole("button", { name: "Analyze Website" }).click();
+  };
+  const choose = async (label: string, option: string) => {
+    await panel.getByRole("group", { name: label }).getByRole("button", { name: option, exact: true }).click();
+  };
+
+  // Goal-driven offline fixtures
+  const cancelGoal = "Can I cancel my scheduled bank transfer?";
+  await analyze(cancelGoal);
+  await panel.getByText("Needs information").first().waitFor();
+  record("A1 with no facts asks for information", (await bodyText()).includes("Still needed"));
+  record("A1 provenance is the offline fixture label", (await bodyText()).includes("Offline fixture — not a live analysis."));
+  await shot(panel, "10-goal-questions");
+  await panel.getByRole("button", { name: "All facts" }).click();
+  await choose("Transfer status", "Scheduled");
+  await choose("Transfer type", "Standard");
+  await choose("Transfer processing has begun", "No");
+  await panel.getByText("Verified route").waitFor();
+  record("A1 ready route is the cancel step only", (await panel.locator("li.step").count()) === 1);
+  record("A1 ready step does not offer Open page", (await panel.getByRole("button", { name: "Open page" }).count()) === 0);
+  for (const width of [320, 360, 400] as const) {
+    await panel.setViewportSize({ width, height: 980 });
+    record(`Goal route at ${width}px has no horizontal overflow`, await noHorizontalOverflow());
+    await shot(panel, `11-goal-ready-${width}w`);
+  }
+  await panel.setViewportSize({ width: 360, height: 980 });
+  await panel.getByRole("button", { name: "Show on page" }).click();
+  await panel.getByText(/Highlighted on the page|Complete the action yourself/).waitFor();
+  record("A1 show-on-page highlights Cancel and does not click it", (await highlighted()) === 1 && dialogs.length === 0);
+  record(
+    "A1 highlight is the Cancel transfer button",
+    (await portal.locator("[data-slayer-highlight]").first().innerText()).includes("Cancel transfer"),
+  );
+  await portal.waitForTimeout(1500);
+  record("A1 show-on-page sent no non-GET request", portalRequests.length === 0, portalRequests.join(" | "));
+  await shot(portal, "12-goal-cancel-highlighted");
+
+  await choose("Transfer type", "Instant");
+  await panel.getByText("No permitted route").waitFor();
+  record("A1 instant transfer removes the route", (await panel.locator("li.step").count()) === 0);
+  await shot(panel, "13-goal-prohibited");
+
+  await panel.getByLabel("Your goal").fill(`${cancelGoal} today`);
+  await panel.getByText("Session invalidated").waitFor();
+  record("Editing the goal invalidates the previous route", (await panel.locator("li.step").count()) === 0);
+  const deniedGoal = (await panel.evaluate(() => chrome.runtime.sendMessage({ type: "SHOW_STEP", index: 1 }))) as { outcome: string };
+  record("Show against a goal-invalidated session is denied", deniedGoal.outcome === "denied", deniedGoal.outcome);
+  await shot(panel, "14-goal-invalidated");
+
+  await analyze("Please move this money somewhere else");
+  await panel.getByText("This goal is not available in the offline demonstration.").waitFor();
+  record("Unsupported goal does not load a route", (await panel.locator("li.step").count()) === 0 && !(await bodyText()).includes("Verified route"));
+  await shot(panel, "15-unsupported-goal");
+
+  await analyze("I sent a completed transfer to the wrong recipient. How can I recover it?");
+  await panel.getByRole("button", { name: "All facts" }).click();
+  await choose("Transfer status", "Completed");
+  await choose("User started the transfer themselves", "Yes");
+  await choose("Transfer type", "Scheduled");
+  await panel.getByText("Human review required").waitFor();
+  record("A2 completed recovery stays in review", (await panel.locator("li.step").count()) === 0);
+  await shot(panel, "16-goal-review");
+
+  await analyze("I found a transfer I did not authorize. What should I do?");
+  await panel.getByRole("button", { name: "All facts" }).click();
+  await choose("User started the transfer themselves", "No");
+  await panel.getByText("Needs information").first().waitFor();
+  await shot(panel, "17-unauthorized-questions");
+  await choose("Transfer reference number is available", "Yes");
+  await choose("Date first noticed is available", "Yes");
+  await choose("Account has been secured", "No");
+  await panel.getByText("Verified route").waitFor();
+  record("A3 completed facts produce a ready route", (await panel.locator("li.step").count()) >= 1);
+  record("A3 ready route is not an Open page action", (await panel.getByRole("button", { name: "Open page" }).count()) === 0);
+  await shot(panel, "18-unauthorized-ready");
+
+  await openDemo();
+  await panel.getByRole("button", { name: "Reset demo" }).click();
+  await panel.getByText("No guidance loaded").waitFor();
+  await panel.getByLabel("Your goal").fill("");
+  await portal.goto(`${PORTAL}/dashboard`);
+
   // 1. Verified fixture-backed cancellation route
-  await load("cancel-ready", "Verified fixture route");
-  record("Fixture copy distinguishes demo from live sync", (await bodyText()).includes("not a live analysis"));
+  await load("cancel-ready", "Verified route");
+  record("Developer fixture stays labeled as a fixture", (await bodyText()).includes("Offline fixture") && (await bodyText()).includes("Fixture demonstration"));
+  record("Developer note stays out of the collapsed main view", (await panel.locator("details.demo-controls").evaluate((node) => node instanceof HTMLDetailsElement && !node.open)));
   record("Ready route shows two ordered steps", (await panel.locator("li.step").count()) === 2);
   record("Active step is labeled as step 1 of 2", /step 1 of 2/i.test(await bodyText()));
   await panel.locator("li.step").nth(0).getByRole("button", { name: "Mark done" }).click();
@@ -143,6 +230,7 @@ try {
 
   // 4. State-changing control: highlight only
   const cancelRow = panel.locator("li.step").nth(1);
+  await cancelRow.getByRole("button", { name: "Cancel the transfer" }).click();
   record("Cancel step has no Open page button", (await cancelRow.getByRole("button", { name: "Open page" }).count()) === 0);
   record("Cancel step is labeled as the user's own action", (await cancelRow.innerText()).includes("never click"));
   await cancelRow.getByRole("button", { name: "Show on page" }).click();
@@ -170,6 +258,7 @@ try {
   await shot(panel, "06-facts-changed-blocked");
 
   // 7. The older route cannot come back
+  await openDemo();
   await panel.getByLabel("Fixture scenario").selectOption("cancel-ready");
   await panel.getByRole("button", { name: "Load scenario" }).click();
   await panel.getByText(/Rejected: this is an older analysis/).waitFor();
@@ -179,12 +268,13 @@ try {
   await load("review-required-recorded", "Human review required");
   record("Review required: no authorized route", (await panel.locator("li.step").count()) === 0);
   record("Review required: no navigation controls", (await panel.getByRole("button", { name: /Open page|Show on page|Mark done/ }).count()) === 0);
-  record("Review required never reads as ready", !/Verified fixture route/.test(await bodyText()));
+  record("Review required never reads as ready", !/Verified route/.test(await bodyText()));
   await shot(panel, "07-review-required");
 
   // 9. Other non-ready states
-  await load("needs-information", "More information needed");
+  await load("needs-information", "Needs information");
   record("Needs information lists the missing detail", (await bodyText()).includes("Payment method"));
+  await shot(panel, "08-needs-information");
   await load("missing-evidence", "Human review required");
   record("Rejected evidence yields review, not a route", (await panel.locator("li.step").count()) === 0);
   await shot(panel, "08-evidence-rejected");
@@ -192,11 +282,12 @@ try {
   // 10. Session invalidation
   await openDemo();
   await panel.getByRole("button", { name: "Reset demo" }).click();
-  await load("cancel-ready", "Verified fixture route");
+  await load("cancel-ready", "Verified route");
   await portal.goto(`${PORTAL}/dashboard`);
   await panel.locator("li.step").nth(0).getByRole("button", { name: "Show on page" }).click();
   await panel.getByText(/Highlighted on the page|Complete the action yourself/).waitFor();
   record("Fresh session highlights again", (await highlighted()) === 1);
+  await openDemo();
   await panel.getByRole("button", { name: "Invalidate session" }).click();
   await panel.getByText("Session invalidated").waitFor();
   record("Invalidated session shows no route", (await panel.locator("li.step").count()) === 0);

@@ -6,7 +6,7 @@ Guidance-only companion for the **Northstar Mock Bank** loopback portal. It help
 
 This build does **not** live-synchronize with the Bureaucracy Slayer app. There is no existing read-only plan-export boundary that an extension can trust.
 
-Routes shown in the side panel are **prebuilt guidance envelopes** produced offline by the deterministic pipeline (evidence validator → evaluator → planner) from recorded/hand-authored fixtures. The panel banner states this. Loading a scenario stands in for the app publishing a sanitized plan.
+Routes shown in the side panel are **prebuilt guidance envelopes** produced offline by the deterministic pipeline (evidence validator → evaluator → planner). The panel states `Offline fixture — not a live analysis.` Type one of the three recognized demonstration goals. Any other sentence is refused and does not select a different fixture. Developer controls can still load fixtures for testing; they are not part of normal use.
 
 No Anthropic API calls are made at build, test, or run time.
 
@@ -16,7 +16,7 @@ No Anthropic API calls are made at build, test, or run time.
 2. Build: `npm run build:extension`. Output is `extension/dist/`.
 3. Chrome → `chrome://extensions` → Developer mode → Load unpacked → select `extension/dist`.
 4. Open Northstar, then click the extension action to open the side panel.
-5. Expand **Demo controls**, pick a scenario, and click **Load scenario**.
+5. Type a recognized goal, such as `Can I cancel my scheduled bank transfer?`, and click **Analyze Website**. Answer the questions the fixture asks. The extension never clicks the page for you.
 
 Automated real-browser check (uses Edge or Chrome for Testing, because current branded Chrome ignores `--load-extension`):
 

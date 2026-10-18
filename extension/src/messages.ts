@@ -1,10 +1,21 @@
 import { z } from "zod";
 
 import type { GuidanceView } from "./guidance.js";
+import type { GoalQuestionView } from "./goals.js";
 
-/** Panel -> background. Commands carry only step indexes/ids, never URLs or selectors. */
+/** Panel -> background. Commands name a goal, an answer id, or a step index. Never a URL or selector. */
 export const PanelCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("GET_VIEW") }).strict(),
+  z.object({ type: z.literal("ANALYZE"), goal: z.string().max(2_000) }).strict(),
+  z.object({ type: z.literal("GOAL_EDITED"), goal: z.string().max(2_000) }).strict(),
+  z
+    .object({
+      type: z.literal("ANSWER"),
+      questionId: z.string().min(1),
+      optionId: z.string().min(1),
+    })
+    .strict(),
+  z.object({ type: z.literal("SET_FACT_MODE"), mode: z.enum(["guided", "all"]) }).strict(),
   z.object({ type: z.literal("LOAD_FIXTURE"), fixtureId: z.string().min(1) }).strict(),
   z.object({ type: z.literal("INVALIDATE") }).strict(),
   z.object({ type: z.literal("RESET") }).strict(),
@@ -24,14 +35,21 @@ export type ActionOutcome =
   | "find_manually"
   | "denied"
   | "rejected_fixture"
-  | "no_portal_tab";
+  | "no_portal_tab"
+  | "unsupported_goal"
+  | "goal_required";
 
 export type PanelResponse = Readonly<{
   view: GuidanceView;
   fixtures: readonly Readonly<{ id: string; label: string }>[];
+  questions: readonly GoalQuestionView[];
+  factMode: "guided" | "all";
+  canPersonalize: boolean;
   outcome: ActionOutcome;
-  /** Present only for "highlighted" outcomes. */
+  /** Present only for highlighted, denied, or rejected outcomes. */
   detail?: string;
+  /** Persistent operational or unsupported-goal message. */
+  notice?: string;
 }>;
 
 /** Background -> content script (sent only to a verified portal tab). */

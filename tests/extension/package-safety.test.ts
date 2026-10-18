@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { buildFixtureEnvelopes } from "../../extension/scripts/fixtures.js";
+import { buildGoalCatalog } from "../../extension/scripts/goal-catalog.js";
 import { renderFixtureModule } from "../../extension/scripts/render.js";
 
 const root = resolve(import.meta.dirname, "../../extension");
@@ -67,7 +68,7 @@ describe("source safety", () => {
   });
 
   it("the committed fixture module matches a fresh deterministic offline build", async () => {
-    const fresh = renderFixtureModule(await buildFixtureEnvelopes());
+    const fresh = renderFixtureModule(await buildFixtureEnvelopes(), await buildGoalCatalog());
     expect(read("src/generated/fixtureEnvelopes.ts")).toBe(fresh);
   });
 });
