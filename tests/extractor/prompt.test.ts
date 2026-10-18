@@ -54,15 +54,45 @@ describe("Stage 1 policy extraction prompt", () => {
     );
   });
 
-  it("keeps prerequisites available for dependency mapping instead of inventing permission", () => {
+  it("separates required information from independently governed actions", () => {
     expect(POLICY_EXTRACTION_SYSTEM_PROMPT).toContain(
-      "Preserve them as require_condition or require_action rules",
+      "Represent it as require_condition over declared non-sensitive facts",
     );
     expect(POLICY_EXTRACTION_SYSTEM_PROMPT).toContain(
-      "Stage 2 can map action prerequisites and dependencies",
+      "Do not turn filling a field, supplying an identifier, or answering a question into a separate user_task",
     );
     expect(POLICY_EXTRACTION_SYSTEM_PROMPT).toContain(
-      "do not invent them as permission conditions",
+      "Required independent actions are genuinely distinct prior procedures",
+    );
+    expect(POLICY_EXTRACTION_SYSTEM_PROMPT).toContain(
+      "They remain subject to independent closed-world authorization",
+    );
+    expect(PROCEDURE_MAPPING_SYSTEM_PROMPT).toContain(
+      "Do not create a user_task, prerequisiteActionIds entry, or requiredActionId",
+    );
+  });
+
+  it("models whether-answers and alternative identifiers without changing their meaning", () => {
+    expect(POLICY_EXTRACTION_SYSTEM_PROMPT).toContain(
+      "require a known answer without requiring a particular value",
+    );
+    expect(POLICY_EXTRACTION_SYSTEM_PROMPT).toContain(
+      "both fact == true and fact == false",
+    );
+    expect(POLICY_EXTRACTION_SYSTEM_PROMPT).toContain(
+      "Never reinterpret \"tell us whether your account is secured\" as \"your account must be secured.\"",
+    );
+    expect(POLICY_EXTRACTION_SYSTEM_PROMPT).toContain(
+      "\"reference number, or date and amount\" must remain an any condition whose second branch is an all condition",
+    );
+  });
+
+  it("does not permit an always condition to stand in for missing information", () => {
+    expect(POLICY_EXTRACTION_SYSTEM_PROMPT).toContain(
+      "Do not use an always requirementConditionId merely to record that information is required",
+    );
+    expect(POLICY_EXTRACTION_SYSTEM_PROMPT).toContain(
+      "encode the actual non-always fact condition",
     );
   });
 

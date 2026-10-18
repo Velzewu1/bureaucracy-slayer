@@ -94,10 +94,24 @@ describe("Northstar grounded scenarios", () => {
   });
 
   it("keeps an unauthorized transfer distinct from a mistaken-transfer report", () => {
-    const unauthorized = decide(LIVE_TEST_UNAUTHORIZED_GOAL, facts({ initiated_by_user: false }));
+    const missingInformation = decide(
+      LIVE_TEST_UNAUTHORIZED_GOAL,
+      facts({ initiated_by_user: false }),
+    );
+    const unauthorized = decide(LIVE_TEST_UNAUTHORIZED_GOAL, facts({
+      initiated_by_user: false,
+      transfer_reference_available: true,
+      first_notice_date_available: true,
+      account_secured: false,
+    }));
     const mistaken = decide(LIVE_TEST_UNAUTHORIZED_GOAL, facts({ initiated_by_user: true }));
     const unknown = decide(LIVE_TEST_UNAUTHORIZED_GOAL, facts({}));
 
+    expect(decision(missingInformation, "proc_submit_unauthorized_report")).toMatchObject({
+      status: "indeterminate",
+      reasonCodes: ["MISSING_FACTS"],
+    });
+    expect(missingInformation.plan.status).toBe("needs_information");
     expect(decision(unauthorized, "proc_submit_unauthorized_report")).toMatchObject({
       status: "allowed",
       reasonCodes: ["PERMITTED"],
@@ -107,6 +121,7 @@ describe("Northstar grounded scenarios", () => {
       "proc_submit_unauthorized_report",
     );
     expect(decision(unauthorized, "proc_submit_mistaken_report")?.status).toBe("forbidden");
+    expect(decision(unauthorized, "proc_submit_recovery_request")?.status).toBe("forbidden");
     expect(unauthorized.plan.steps.map((step) => step.procedureActionId)).not.toContain(
       "proc_submit_mistaken_report",
     );
