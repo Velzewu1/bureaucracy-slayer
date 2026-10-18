@@ -16,7 +16,7 @@ No Anthropic API calls are made at build, test, or run time.
 2. Build: `npm run build:extension`. Output is `extension/dist/`.
 3. Chrome → `chrome://extensions` → Developer mode → Load unpacked → select `extension/dist`.
 4. Open Northstar, then click the extension action to open the side panel.
-5. Use **Demo controls** to load a fixture scenario.
+5. Expand **Demo controls**, pick a scenario, and click **Load scenario**.
 
 Automated real-browser check (uses Edge or Chrome for Testing, because current branded Chrome ignores `--load-extension`):
 

@@ -52,14 +52,31 @@ try {
   await portal.goto(`${PORTAL}/dashboard`);
 
   const panel = await context.newPage();
-  await panel.setViewportSize({ width: 420, height: 980 });
+  await panel.setViewportSize({ width: 360, height: 980 });
   await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
+  await panel.getByText("Demo controls").waitFor();
+
+  const openDemo = async () => {
+    const demo = panel.locator("details.demo-controls");
+    if (!(await demo.evaluate((node) => node instanceof HTMLDetailsElement && node.open))) {
+      await demo.locator("summary").click();
+    }
+  };
+  const noHorizontalOverflow = async () =>
+    panel.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1);
+
+  record(
+    "Demo controls collapsed by default",
+    !(await panel.locator("details.demo-controls").evaluate((node) => node instanceof HTMLDetailsElement && node.open)),
+  );
+  await openDemo();
   await panel.getByRole("button", { name: "Reset demo" }).click();
   await panel.getByText("No guidance loaded").waitFor();
 
   const shot = async (page: Page, name: string) => page.screenshot({ path: resolve(shots, `${name}.png`) });
   const highlighted = () => portal.locator("[data-slayer-highlight]").count();
   const load = async (fixtureId: string, expectText: string) => {
+    await openDemo();
     await panel.getByLabel("Fixture scenario").selectOption(fixtureId);
     await panel.getByRole("button", { name: "Load scenario" }).click();
     await panel.getByText(expectText).first().waitFor();
@@ -71,15 +88,37 @@ try {
   await shot(panel, "01-no-guidance");
 
   // 1. Verified fixture-backed cancellation route
-  await load("cancel-ready", "Verified route");
-  record("Fixture banner distinguishes demo from live sync", (await bodyText()).includes("not live-synchronized"));
+  await load("cancel-ready", "Verified fixture route");
+  record("Fixture copy distinguishes demo from live sync", (await bodyText()).includes("not a live analysis"));
   record("Ready route shows two ordered steps", (await panel.locator("li.step").count()) === 2);
+  record("Active step is labeled as step 1 of 2", /step 1 of 2/i.test(await bodyText()));
+  await panel.locator("li.step").nth(0).getByRole("button", { name: "Mark done" }).click();
+  await panel.getByText(/step 2 of 2/i).waitFor();
+  record("Mark done advances the active step", /step 2 of 2/i.test(await bodyText()));
+  await panel.locator("li.step").nth(0).getByRole("button", { name: "Undo done" }).click();
+  await panel.getByText(/step 1 of 2/i).waitFor();
+  record("Undo done restores step 1 as active", /step 1 of 2/i.test(await bodyText()));
+  await panel.locator("li.step.next details.sources summary").click();
+  record("Source citation expands", (await panel.locator("li.step.next blockquote").count()) === 1);
+  const tabbed = await panel.evaluate(() => {
+    const first = document.querySelector("button, select, summary, a");
+    if (!(first instanceof HTMLElement)) return false;
+    first.focus();
+    return document.activeElement === first;
+  });
+  record("Keyboard can focus a control", tabbed);
   record("Panel hides internal ids", !/rule_|proc_|action_|plan_|block_|transfer_status/.test(await bodyText()));
   await shot(panel, "02-verified-route");
+  for (const width of [320, 360, 400] as const) {
+    await panel.setViewportSize({ width, height: 980 });
+    record(`${width}px panel has no horizontal overflow`, await noHorizontalOverflow());
+    await shot(panel, `02-verified-${width}w`);
+  }
+  await panel.setViewportSize({ width: 360, height: 980 });
 
   // 2. Highlight the observed dashboard link (step 1) without clicking
   await panel.locator("li.step").nth(0).getByRole("button", { name: "Show on page" }).click();
-  await panel.getByText(/Highlighted on the page/).waitFor();
+  await panel.getByText(/Highlighted on the page|Complete the action yourself/).waitFor();
   record("Observed navigation link highlighted on dashboard", (await highlighted()) === 1);
   const highlightedHref = await portal.locator("[data-slayer-highlight]").first().evaluate((node) =>
     node instanceof HTMLAnchorElement ? node.href : "",
@@ -107,7 +146,7 @@ try {
   record("Cancel step has no Open page button", (await cancelRow.getByRole("button", { name: "Open page" }).count()) === 0);
   record("Cancel step is labeled as the user's own action", (await cancelRow.innerText()).includes("never click"));
   await cancelRow.getByRole("button", { name: "Show on page" }).click();
-  await panel.getByText(/Highlighted on the page/).waitFor();
+  await panel.getByText(/Highlighted on the page|Complete the action yourself/).waitFor();
   record("Cancel button highlighted", (await highlighted()) === 1);
   record(
     "Highlight is on the Cancel transfer button",
@@ -137,25 +176,26 @@ try {
   record("Older route replayed after change is rejected", (await panel.getByText("No permitted route").count()) >= 1);
 
   // 8. Review-required recorded analysis
-  await load("review-required-recorded", "Review required");
+  await load("review-required-recorded", "Human review required");
   record("Review required: no authorized route", (await panel.locator("li.step").count()) === 0);
   record("Review required: no navigation controls", (await panel.getByRole("button", { name: /Open page|Show on page|Mark done/ }).count()) === 0);
-  record("Review required never reads as ready", !/Verified route/.test(await bodyText()));
+  record("Review required never reads as ready", !/Verified fixture route/.test(await bodyText()));
   await shot(panel, "07-review-required");
 
   // 9. Other non-ready states
   await load("needs-information", "More information needed");
   record("Needs information lists the missing detail", (await bodyText()).includes("Payment method"));
-  await load("missing-evidence", "Review required");
+  await load("missing-evidence", "Human review required");
   record("Rejected evidence yields review, not a route", (await panel.locator("li.step").count()) === 0);
   await shot(panel, "08-evidence-rejected");
 
   // 10. Session invalidation
+  await openDemo();
   await panel.getByRole("button", { name: "Reset demo" }).click();
-  await load("cancel-ready", "Verified route");
+  await load("cancel-ready", "Verified fixture route");
   await portal.goto(`${PORTAL}/dashboard`);
   await panel.locator("li.step").nth(0).getByRole("button", { name: "Show on page" }).click();
-  await panel.getByText(/Highlighted on the page/).waitFor();
+  await panel.getByText(/Highlighted on the page|Complete the action yourself/).waitFor();
   record("Fresh session highlights again", (await highlighted()) === 1);
   await panel.getByRole("button", { name: "Invalidate session" }).click();
   await panel.getByText("Session invalidated").waitFor();

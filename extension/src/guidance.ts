@@ -306,49 +306,46 @@ const EMPTY_VIEW: Omit<GuidanceView, "availability" | "headline" | "message"> = 
 const NON_AUTHORITATIVE: Readonly<Record<"none" | "rejected" | "expired" | "invalidated" | "superseded", Readonly<{ headline: string; message: string }>>> = {
   none: {
     headline: "No guidance loaded",
-    message: "No verified route is available. Nothing here can navigate or highlight anything.",
+    message: "Load a demo scenario to follow a verified fixture route on Northstar.",
   },
   rejected: {
     headline: "Guidance rejected",
-    message:
-      "The route data failed validation (format, integrity, origin or page grounding), so it was discarded. Nothing here can navigate or highlight anything.",
+    message: "This route failed validation, so nothing here can navigate or highlight the site.",
   },
   expired: {
     headline: "Guidance expired",
-    message: "This route is out of date and is no longer authoritative. Re-run the analysis to get a fresh route.",
+    message: "This route is out of date. Load a fresh scenario before continuing.",
   },
   invalidated: {
     headline: "Session invalidated",
-    message:
-      "Your goal or answers changed, or the session ended, so this route is no longer authoritative. Re-run the analysis.",
+    message: "Your goal or answers changed, so this route is no longer authoritative.",
   },
   superseded: {
-    headline: "Superseded guidance",
-    message: "A newer analysis exists for this session. This route is no longer authoritative.",
+    headline: "Newer route available",
+    message: "A newer analysis replaced this route. It is no longer authoritative.",
   },
 };
 
 const STATUS_COPY: Readonly<Record<PlanStatus, Readonly<{ headline: string; message: string }>>> = {
   ready: {
-    headline: "Verified route",
-    message: "Follow these steps in order. You perform every action yourself; this extension only guides.",
+    headline: "Verified fixture route",
+    message: "Follow the next step. You complete every action yourself.",
   },
   needs_information: {
     headline: "More information needed",
-    message: "A route cannot be confirmed until the missing details below are answered in Bureaucracy Slayer.",
+    message: "A route cannot be confirmed until these details are answered in Bureaucracy Slayer.",
   },
   blocked: {
     headline: "No permitted route",
-    message: "The cited policy prohibits this route for the current situation. Do not attempt it.",
+    message: "Cited policy prohibits this for the current situation. Do not attempt it.",
   },
   review_required: {
-    headline: "Review required",
-    message:
-      "Policy evidence could not be fully verified, so no route is authorized. Read the source pages yourself or contact support before acting.",
+    headline: "Human review required",
+    message: "Policy evidence could not be fully verified, so no route is authorized.",
   },
   stale: {
     headline: "Stale route",
-    message: "The analysis no longer matches the latest data, so no route is authorized. Re-run the analysis.",
+    message: "This analysis no longer matches the latest data, so no route is authorized.",
   },
 };
 

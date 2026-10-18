@@ -215,6 +215,7 @@ describe("route presentation", () => {
   it("shows the verified cancellation route with one navigation step and one manual step", async () => {
     const view = buildView(await authoritative(fixture("cancel-ready")));
     expect(view.availability).toBe("ready");
+    expect(view.headline).toBe("Verified fixture route");
     expect(view.navigable).toBe(true);
     expect(view.nextStepIndex).toBe(1);
     const [open, cancel] = view.steps;
@@ -256,7 +257,7 @@ describe("route presentation", () => {
   it("review-required text never reads as ready and keeps the warning", async () => {
     const view = buildView(await authoritative(fixture("review-required-recorded")));
     expect(view.availability).toBe("review_required");
-    expect(view.headline).toBe("Review required");
+    expect(view.headline).toBe("Human review required");
     expect(view.notices.length).toBeGreaterThan(0);
   });
 

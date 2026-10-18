@@ -31,9 +31,9 @@ function describeOutcome(outcome: ActionOutcome, detail: string | undefined): ty
     case "none":
       return undefined;
     case "opened":
-      return { text: "Opened the page in your Northstar tab. Nothing was clicked for you.", warn: false };
+      return { text: "Opened the Northstar page. Nothing was clicked.", warn: false };
     case "highlighted":
-      return { text: "Highlighted on the page. Nothing was clicked; do it yourself when you are ready.", warn: false };
+      return { text: "Highlighted on the page. Complete the action yourself.", warn: false };
     case "find_manually":
       return {
         text:
@@ -57,23 +57,56 @@ function describeOutcome(outcome: ActionOutcome, detail: string | undefined): ty
   }
 }
 
-function minutes(ms: number | undefined): string {
-  if (ms === undefined) return "";
-  return `Valid for about ${Math.max(1, Math.ceil(ms / 60000))} more min.`;
+function minutes(ms: number | undefined): string | undefined {
+  if (ms === undefined) return undefined;
+  return `About ${Math.max(1, Math.ceil(ms / 60000))} min left`;
 }
 
-function renderStep(step: StepView, isNext: boolean, act: (command: PanelCommand) => void): HTMLElement {
+function statusKind(availability: GuidanceView["availability"]): string {
+  switch (availability) {
+    case "ready":
+      return "ok";
+    case "needs_information":
+      return "info";
+    case "blocked":
+    case "rejected":
+      return "stop";
+    case "review_required":
+    case "stale":
+    case "expired":
+    case "invalidated":
+    case "superseded":
+      return "hold";
+    default:
+      return "idle";
+  }
+}
+
+function renderStep(
+  step: StepView,
+  options: Readonly<{ active: boolean; total: number; expanded: boolean }>,
+  act: (command: PanelCommand) => void,
+  onToggle: () => void,
+): HTMLElement {
+  const expanded = options.expanded;
+  const kindLabel = step.kind === "navigate" ? "Opens a page" : "You do this";
+  const toggle = element("button", {
+    className: "step-toggle",
+    text: step.title,
+  });
+  toggle.type = "button";
+  toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+  toggle.addEventListener("click", onToggle);
+
   const head = element("div", { className: "step-head" }, [
-    element("span", { text: `${step.index}.` }),
-    element("span", { text: step.title }),
-    element("span", {
-      className: `tag ${step.kind}`,
-      text: step.kind === "navigate" ? "Opens a page" : "You do this",
-    }),
+    element("span", { className: "step-index", text: String(step.index) }),
+    toggle,
+    element("span", { className: `tag ${step.kind}`, text: kindLabel }),
   ]);
+
   const buttons = element("div", { className: "actions" });
   if (step.canOpen) {
-    const open = element("button", { text: "Open page" });
+    const open = element("button", { className: expanded ? "primary" : "secondary", text: "Open page" });
     open.addEventListener("click", () => act({ type: "OPEN_STEP", index: step.index }));
     buttons.append(open);
   }
@@ -82,56 +115,67 @@ function renderStep(step: StepView, isNext: boolean, act: (command: PanelCommand
     show.addEventListener("click", () => act({ type: "SHOW_STEP", index: step.index }));
     buttons.append(show);
   }
-  const done = element("button", { className: "secondary", text: step.done ? "Undo done" : "Mark done" });
+  const done = element("button", { className: "ghost", text: step.done ? "Undo done" : "Mark done" });
   done.addEventListener("click", () => act({ type: "MARK_DONE", index: step.index, done: !step.done }));
   buttons.append(done);
 
   const sources =
     step.citations.length === 0
       ? undefined
-      : element("details", {}, [
+      : element("details", { className: "sources" }, [
           element("summary", { text: `Source${step.citations.length > 1 ? "s" : ""} (${step.citations.length})` }),
           ...step.citations.map((citation) =>
             element("blockquote", { text: `${citation.pageTitle || citation.pageUrl}: “${citation.excerpt}”` }),
           ),
         ]);
 
-  return element(
-    "li",
-    { className: `step${isNext ? " next" : ""}${step.done ? " done" : ""}` },
-    [
-      isNext ? element("div", { className: "next-label", text: "Next step" }) : undefined,
-      head,
-      element("div", { text: step.instruction }),
-      step.manualNote === undefined ? undefined : element("div", { className: "manual-note", text: step.manualNote }),
-      buttons,
-      sources,
-    ],
-  );
+  const classes = ["step", step.kind, expanded ? "expanded" : "compact", options.active ? "next" : "", step.done ? "done" : ""]
+    .filter((value) => value !== "")
+    .join(" ");
+
+  return element("li", { className: classes }, [
+    options.active
+      ? element("div", { className: "next-label", text: `Step ${step.index} of ${options.total}` })
+      : undefined,
+    head,
+    expanded ? element("p", { className: "step-copy", text: step.instruction }) : undefined,
+    step.manualNote === undefined
+      ? undefined
+      : element("p", { className: "manual-note", text: expanded ? step.manualNote : "The extension will never click it." }),
+    buttons,
+    expanded ? sources : undefined,
+  ]);
 }
 
 function renderView(view: GuidanceView, act: (command: PanelCommand) => void): HTMLElement[] {
-  const header = element("section", { className: "card" }, [
-    element("span", { className: `status ${view.availability}`, text: view.headline }),
-    view.goal === undefined ? undefined : element("p", { className: "goal", text: `Goal: ${view.goal}` }),
-    element("p", { text: view.message }),
+  const remaining = minutes(view.remainingMs);
+  const header = element("section", { className: "card decision" }, [
+    element("p", {
+      className: `status status-${statusKind(view.availability)} ${view.availability}`,
+      text: view.headline,
+    }),
+    view.goal === undefined ? undefined : element("p", { className: "goal", text: view.goal }),
+    element("p", { className: "decision-copy", text: view.message }),
     ...view.notices.map((notice) => element("div", { className: "warning", text: notice })),
     view.missingFactLabels.length === 0
       ? undefined
       : element("div", { className: "warning", text: `Still needed: ${view.missingFactLabels.join(", ")}` }),
-    view.sourceLabel === undefined
-      ? undefined
-      : element("p", { className: "guidance-only", text: view.sourceLabel }),
-    element("p", {
-      className: "guidance-only",
-      text: "Guidance only. This extension never clicks, submits, cancels or sends anything for you. " + minutes(view.remainingMs),
-    }),
+    remaining === undefined ? undefined : element("p", { className: "meta", text: remaining }),
   ]);
   const sections: HTMLElement[] = [header];
   if (view.steps.length > 0) {
     const list = element("ol", { className: "steps" });
-    for (const step of view.steps) list.append(renderStep(step, step.index === view.nextStepIndex, act));
-    sections.push(element("section", {}, [element("h2", { text: "Your route" }), list]));
+    for (const step of view.steps) {
+      const active = step.index === view.nextStepIndex;
+      const expanded = step.index === expandedIndex;
+      list.append(
+        renderStep(step, { active, total: view.steps.length, expanded }, act, () => {
+          expandedIndex = expandedIndex === step.index ? view.nextStepIndex : step.index;
+          paint();
+        }),
+      );
+    }
+    sections.push(element("section", { className: "route" }, [element("h2", { text: "Your route" }), list]));
   }
   return sections;
 }
@@ -151,47 +195,69 @@ function renderDemoControls(
     select.append(option);
   }
   select.addEventListener("change", () => onSelect(select.value));
-  const load = element("button", { text: "Load scenario" });
+  const load = element("button", { className: "primary", text: "Load scenario" });
   load.addEventListener("click", () => act({ type: "LOAD_FIXTURE", fixtureId: select.value }));
   const invalidate = element("button", { className: "secondary", text: "Invalidate session" });
   invalidate.addEventListener("click", () => act({ type: "INVALIDATE" }));
   const reset = element("button", { className: "secondary", text: "Reset demo" });
   reset.addEventListener("click", () => act({ type: "RESET" }));
-  const clear = element("button", { className: "secondary", text: "Clear highlight" });
+  const clear = element("button", { className: "ghost", text: "Clear highlight" });
   clear.addEventListener("click", () => act({ type: "CLEAR_HIGHLIGHT" }));
-  return element("section", { className: "demo" }, [
-    element("strong", { text: "Demo controls (fixture mode)" }),
-    element("div", { text: "Scenarios are prebuilt from recorded/hand-authored fixtures run through the deterministic pipeline. Loading one stands in for the Slayer app publishing a plan." }),
+  const details = element("details", { className: "demo-controls" }, [
+    element("summary", { text: "Demo controls" }),
+    element("p", { className: "demo-help", text: "Loading a scenario stands in for the Slayer app publishing a plan." }),
     select,
     element("div", { className: "actions" }, [load, invalidate, reset, clear]),
   ]);
+  if (demoOpen) details.setAttribute("open", "");
+  details.addEventListener("toggle", () => {
+    demoOpen = details.open;
+  });
+  return details;
 }
 
 let selectedFixture = "";
 let latest: PanelResponse | undefined;
+let expandedIndex: number | undefined;
+let demoOpen = false;
+let lastAvailability: GuidanceView["availability"] | undefined;
 
 function paint(): void {
   if (root === null || latest === undefined) return;
   const response = latest;
   if (selectedFixture === "") selectedFixture = response.fixtures[0]?.id ?? "";
+  if (lastAvailability !== response.view.availability || expandedIndex === undefined) {
+    expandedIndex = response.view.nextStepIndex;
+  }
+  lastAvailability = response.view.availability;
   const act = (command: PanelCommand): void => {
     void send(command).then((next) => {
       feedback = describeOutcome(next.outcome, next.detail);
+      if (viewFingerprint(response.view) !== viewFingerprint(next.view)) {
+        expandedIndex = next.view.nextStepIndex;
+        lastAvailability = next.view.availability;
+      }
       latest = next;
       paint();
     });
   };
   const children: HTMLElement[] = [
-    element("div", {
-      className: "banner",
-      text: "FIXTURE DEMONSTRATION. This panel is not live-synchronized with the Bureaucracy Slayer app; routes come from prebuilt, verified fixtures.",
-    }),
+    element("header", { className: "brand" }, [
+      element("span", { className: "brand-mark", text: "BS" }),
+      element("div", { className: "brand-copy" }, [
+        element("strong", { text: "Bureaucracy Slayer" }),
+        element("span", { text: "Northstar Mock Bank" }),
+      ]),
+    ]),
+    element("p", { className: "mode-chip", text: "Demo mode · Verified fixture" }),
+    element("p", { className: "mode-note", text: "Routes come from prebuilt fixtures, not a live analysis." }),
     ...renderView(response.view, act),
   ];
   if (feedback !== undefined) {
     children.push(element("div", { className: `feedback${feedback.warn ? " warn" : ""}`, text: feedback.text }));
   }
   children.push(renderDemoControls(response.fixtures, act, selectedFixture, (id) => { selectedFixture = id; }));
+  children.push(element("p", { className: "footer", text: "Guidance only · never clicks, submits, or cancels for you." }));
   root.replaceChildren(...children);
 }
 
