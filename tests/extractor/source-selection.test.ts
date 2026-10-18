@@ -191,6 +191,77 @@ describe("goal-focused source selection", () => {
     expect(mistakenPurpose === undefined || /unauthorized/i.test(mistakenPurpose)).toBe(false);
   });
 
+  it("derives cancellation from a grounded stop-before-processing paraphrase", () => {
+    const snapshot = RecordedExtractionBundleSchema.parse(
+      recordedSonnetBundleInput,
+    ).sourceSnapshot;
+    const goal = "Could I stop a scheduled Standard transfer before it starts processing?";
+    const scope = deriveObservedGoalScope(snapshot, goal);
+    const selection = selectFocusedSources(
+      snapshot,
+      goal,
+      { maxPages: 9, maxBlocks: 80, maxActions: 35 },
+      scope,
+    );
+
+    expect(scope?.primaryActionPurpose).toBe("Cancel transfer");
+    expect(selection.coverage).toBe("complete");
+    expect(selectedActionIds(selection)).toContain("action_cec971f543cc085511e5");
+    expect(selectedBlockIds(selection)).toContain("block_fc059175893c4915951c");
+  });
+
+  it("fails closed when the goal explicitly names incompatible observed purposes", () => {
+    const snapshot = RecordedExtractionBundleSchema.parse(
+      recordedSonnetBundleInput,
+    ).sourceSnapshot;
+
+    const goals = [
+      "I do not know whether I should cancel this transfer or report it as unauthorized.",
+      "I sent money but I am not sure whether it was a mistake or fraud. What should I do?",
+    ] as const;
+
+    for (const goal of goals) {
+      expect(deriveObservedGoalScope(snapshot, goal)).toBeUndefined();
+    }
+  });
+
+  it("keeps explicit single-purpose requests distinct and unsupported goals closed", () => {
+    const snapshot = RecordedExtractionBundleSchema.parse(
+      recordedSonnetBundleInput,
+    ).sourceSnapshot;
+    const cases = [
+      {
+        goal: "I made this transfer by mistake. Submit a mistaken transfer report.",
+        purpose: "Submit mistaken transfer report",
+        actionId: "action_1a4c47be86f1e1e46e08",
+      },
+      {
+        goal: "I did not authorize this transfer. Submit an unauthorized transfer report.",
+        purpose: "Submit unauthorized transfer report",
+        actionId: "action_d230d16f5b8ae26d7990",
+      },
+    ] as const;
+
+    for (const { goal, purpose, actionId } of cases) {
+      const scope = deriveObservedGoalScope(snapshot, goal);
+      const selection = selectFocusedSources(
+        snapshot,
+        goal,
+        { maxPages: 9, maxBlocks: 80, maxActions: 35 },
+        scope,
+      );
+      expect(scope?.primaryActionPurpose).toBe(purpose);
+      expect(selection.coverage).toBe("complete");
+      expect(selection.selectedCounts.pages).toBeLessThanOrEqual(9);
+      expect(selection.selectedCounts.blocks).toBeLessThanOrEqual(80);
+      expect(selection.selectedCounts.actions).toBeLessThanOrEqual(35);
+      expect(selectedActionIds(selection)).toContain(actionId);
+    }
+
+    expect(deriveObservedGoalScope(snapshot, "How do I close my mortgage?")).toBeUndefined();
+    expect(deriveObservedGoalScope(snapshot, "Will it rain tomorrow?")).toBeUndefined();
+  });
+
   it("keeps the exact completed-recovery goal inside the focused budget with FAQ coverage", () => {
     const snapshot = RecordedExtractionBundleSchema.parse(
       recordedSonnetBundleInput,

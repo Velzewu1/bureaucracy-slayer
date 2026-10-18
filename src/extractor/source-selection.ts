@@ -217,7 +217,7 @@ type IntentProfile = Readonly<{
 const STOP_WORDS = new Set([
   "a", "an", "and", "are", "can", "determine", "do", "for", "from", "how", "i", "identify",
   "if", "in", "is", "it", "my", "of", "on", "or", "the", "this", "to", "was", "whether",
-  "with", "wrong",
+  "will", "with", "wrong",
 ]);
 
 // These are generic policy-document signals, not domain policy. They influence
@@ -403,7 +403,7 @@ function actionContextText(
  * the trusted snapshot. The user goal can rank those labels, but cannot
  * introduce an action purpose that the collector did not observe.
  */
-export function deriveObservedGoalScope(
+function deriveObservedGoalScopeCandidate(
   snapshot: SiteSnapshot,
   userGoal: string,
 ): GoalScopedExtraction | undefined {
@@ -459,6 +459,9 @@ export function deriveObservedGoalScope(
   const bestPageText = bestPage === undefined
     ? ""
     : `${bestPage.title} ${bestPage.blocks.map((block) => block.text).join(" ")}`;
+  const bestPageMetadata = bestPage === undefined
+    ? ""
+    : `${bestPage.title} ${bestPage.url}`;
 
   const candidates = snapshot.pages.flatMap((page) =>
     page.actions
@@ -483,12 +486,20 @@ export function deriveObservedGoalScope(
             distinctiveActionTokens.size > 0 ? distinctiveActionTokens : actionTokens,
             rareTokenWeight,
           );
+        const metadataWeight = bestPageMetadata === ""
+          ? 0
+          : weightedTokenOverlap(
+            bestPageMetadata,
+            distinctiveActionTokens.size > 0 ? distinctiveActionTokens : actionTokens,
+            rareTokenWeight,
+          );
         return {
           action,
           overlap,
           labelDistinctive,
           contextDistinctive,
           mentionWeight,
+          metadataWeight,
           pageWeight: pageWeights[snapshot.pages.indexOf(page)] ?? 0,
           specificity: actionTokens.size,
           coverage: actionTokens.size === 0 ? 0 : overlap / actionTokens.size,
@@ -504,6 +515,7 @@ export function deriveObservedGoalScope(
   candidates.sort(
     (left, right) =>
       right.labelDistinctive - left.labelDistinctive ||
+      right.metadataWeight - left.metadataWeight ||
       right.mentionWeight - left.mentionWeight ||
       right.operational - left.operational ||
       right.pageWeight - left.pageWeight ||
@@ -541,7 +553,72 @@ export function deriveObservedGoalScope(
       return undefined;
     }
   }
+  const directlySupportedPurposeTokens = (candidate: NonNullable<typeof best>): readonly string[] =>
+    [...normalizedTokens(candidate.action.label)].filter((token) =>
+      frequencyOf(token) <= genericAt &&
+      [...goalTokens].some((goalToken) => tokensRelated(token, goalToken))
+    );
+  const bestSupportedTokens = directlySupportedPurposeTokens(best);
+  const explicitlyUncertain =
+    /\b(?:do\s+not\s+know|don't\s+know|not\s+sure|uncertain|unclear)\b/iu.test(userGoal);
+  if (explicitlyUncertain && bestSupportedTokens.length > 0) {
+    const incompatiblePurpose = candidates.slice(1).find((candidate) => {
+      const supportedTokens = directlySupportedPurposeTokens(candidate);
+      return supportedTokens.length > 0 &&
+        !bestSupportedTokens.some((token) =>
+          supportedTokens.some((other) => tokensRelated(token, other))
+        );
+    });
+    if (incompatiblePurpose !== undefined) return undefined;
+  }
   return { primaryActionPurpose: best.action.label };
+}
+
+function explicitUncertaintyAlternatives(userGoal: string): readonly [string, string] | undefined {
+  const explicitlyUncertain =
+    /\b(?:do\s+not\s+know|don't\s+know|not\s+sure|uncertain|unclear)\b/iu.test(userGoal);
+  if (!explicitlyUncertain) return undefined;
+  const match = /\b(?:whether|if)\b\s+([^?;.!]{1,200}?)\s+\bor\b\s+([^?;.!]{1,200})/iu.exec(userGoal);
+  const left = match?.[1]?.trim();
+  const right = match?.[2]?.trim();
+  return left === undefined || right === undefined || left.length === 0 || right.length === 0
+    ? undefined
+    : [left, right];
+}
+
+export function deriveObservedGoalScope(
+  snapshot: SiteSnapshot,
+  userGoal: string,
+): GoalScopedExtraction | undefined {
+  const scope = deriveObservedGoalScopeCandidate(snapshot, userGoal);
+  const alternatives = explicitUncertaintyAlternatives(userGoal);
+  if (alternatives === undefined) return scope;
+
+  const alternativeScopes = alternatives.map((alternative) => ({
+    alternative,
+    scope: deriveObservedGoalScopeCandidate(snapshot, alternative),
+  }));
+  if (alternativeScopes.some((alternative) => alternative.scope === undefined)) return scope;
+
+  const groundedPurposes = alternativeScopes.map(({ alternative, scope: alternativeScope }) => {
+    if (alternativeScope === undefined) return undefined;
+    const selection = selectFocusedSources(
+      snapshot,
+      alternative,
+      { maxPages: 9, maxBlocks: 80, maxActions: 35 },
+      alternativeScope,
+    );
+    return selection.coverage === "complete"
+      ? alternativeScope.primaryActionPurpose
+      : undefined;
+  });
+  if (
+    groundedPurposes.every((purpose): purpose is string => purpose !== undefined) &&
+    new Set(groundedPurposes).size > 1
+  ) {
+    return undefined;
+  }
+  return scope;
 }
 
 function pageTargetIndex(snapshot: SiteSnapshot): ReadonlyMap<string, number> {
