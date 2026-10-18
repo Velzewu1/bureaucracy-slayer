@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Local environment (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+# Test output
+coverage/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# Caches and temporary files
+.vite/
+.cache/
+.eslintcache
+*.tsbuildinfo
+*.log
+npm-debug.log*
+.tmp/
+tmp/
+.DS_Store
+Thumbs.db

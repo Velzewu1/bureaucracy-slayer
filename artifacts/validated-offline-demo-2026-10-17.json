@@ -1,0 +1,990 @@
+{
+  "artifactKind": "validated_offline_demo_from_saved_stage1_and_stage2",
+  "provenance": {
+    "stage1Source": "live-extraction-debug.json",
+    "stage2Source": "live-stage2-resume-2026-10-17T10-00-46-689Z-2d218849.json",
+    "sourceSnapshotId": "snapshot_41d0d491900cfebb6179",
+    "sourceSnapshotHash": "f5da7bac2d0034f4b4b689945047784c9856dfc32bb47ebbdb50354485b8f214",
+    "policyAnalysisId": "policy_analysis_cancel_wrong_recipient_transfer",
+    "paidCallsDuringReplay": 0
+  },
+  "validation": {
+    "stage1": "valid",
+    "stage1Normalizations": [],
+    "stage2": "valid",
+    "canonicalSchema": "valid",
+    "evidence": "degraded"
+  },
+  "ruleIdMapping": [
+    {
+      "code": "CANONICAL_RULE_ID_NORMALIZED",
+      "originalRuleId": "r1_prohibit_cancel_completed",
+      "canonicalRuleId": "rule_r1_prohibit_cancel_completed"
+    },
+    {
+      "code": "CANONICAL_RULE_ID_NORMALIZED",
+      "originalRuleId": "r2_prohibit_cancel_processing_started",
+      "canonicalRuleId": "rule_r2_prohibit_cancel_processing_started"
+    },
+    {
+      "code": "CANONICAL_RULE_ID_NORMALIZED",
+      "originalRuleId": "r3_permit_cancel_scheduled",
+      "canonicalRuleId": "rule_r3_permit_cancel_scheduled"
+    },
+    {
+      "code": "CANONICAL_RULE_ID_NORMALIZED",
+      "originalRuleId": "r4_permit_recovery_completed_self_initiated",
+      "canonicalRuleId": "rule_r4_permit_recovery_completed_self_initiated"
+    },
+    {
+      "code": "CANONICAL_RULE_ID_NORMALIZED",
+      "originalRuleId": "r5_prohibit_recovery_not_initiated",
+      "canonicalRuleId": "rule_r5_prohibit_recovery_not_initiated"
+    },
+    {
+      "code": "CANONICAL_RULE_ID_NORMALIZED",
+      "originalRuleId": "r6_require_recovery_reference_and_recipient",
+      "canonicalRuleId": "rule_r6_require_recovery_reference_and_recipient"
+    },
+    {
+      "code": "CANONICAL_RULE_ID_NORMALIZED",
+      "originalRuleId": "r7_require_recovery_description_and_email",
+      "canonicalRuleId": "rule_r7_require_recovery_description_and_email"
+    },
+    {
+      "code": "CANONICAL_RULE_ID_NORMALIZED",
+      "originalRuleId": "r8_require_instant_completed_before_recovery",
+      "canonicalRuleId": "rule_r8_require_instant_completed_before_recovery"
+    }
+  ],
+  "procedureModel": {
+    "schemaVersion": 1,
+    "id": "procedure_map_cancel_wrong_recipient_transfer",
+    "sourceSnapshotId": "snapshot_41d0d491900cfebb6179",
+    "sourceSnapshotHash": "f5da7bac2d0034f4b4b689945047784c9856dfc32bb47ebbdb50354485b8f214",
+    "extractedAt": "2025-01-01T00:00:00Z",
+    "goalSummary": "Try to cancel a mistaken $850 transfer; if cancellation is not possible, use the alternatives of a payment recovery request or a mistaken transfer report via Support.",
+    "factDefinitions": [
+      {
+        "key": "transfer_status",
+        "label": "Transfer status",
+        "type": "string",
+        "allowedValues": [
+          "scheduled",
+          "completed"
+        ],
+        "sensitive": false
+      },
+      {
+        "key": "processing_started",
+        "label": "Transfer processing has begun",
+        "type": "boolean",
+        "sensitive": false
+      },
+      {
+        "key": "initiated_by_user",
+        "label": "User started the transfer themselves",
+        "type": "boolean",
+        "sensitive": false
+      },
+      {
+        "key": "transfer_type",
+        "label": "Transfer type",
+        "type": "string",
+        "allowedValues": [
+          "instant",
+          "scheduled"
+        ],
+        "sensitive": false
+      }
+    ],
+    "actions": [
+      {
+        "id": "proc_cancel_transfer",
+        "kind": "navigate",
+        "label": "Review canceling a transfer",
+        "description": "Open the Canceling a transfer guidance from the transfer details page to check whether the transfer can be canceled.",
+        "websiteActionId": "action_7c0f523f610e7f387f0a",
+        "prerequisiteActionIds": [],
+        "terminal": true
+      },
+      {
+        "id": "proc_open_support",
+        "kind": "navigate",
+        "label": "Open Support page",
+        "description": "Go to the Support page that hosts the Payment recovery and Report a mistaken transfer forms.",
+        "websiteActionId": "action_01c0d8b206bdb31bf0d0",
+        "prerequisiteActionIds": [],
+        "terminal": false
+      },
+      {
+        "id": "proc_provide_reference_and_recipient",
+        "kind": "user_task",
+        "label": "Provide reference number and recipient information",
+        "description": "The user supplies the transaction reference number and the recipient's information needed to open a recovery request.",
+        "prerequisiteActionIds": [],
+        "terminal": false
+      },
+      {
+        "id": "proc_provide_description_and_email",
+        "kind": "interact",
+        "label": "Describe what happened and give contact email",
+        "description": "Fill in the reason for the request, giving a short description of what happened and an email address for contact.",
+        "websiteActionId": "action_d005d5668f5f84b74d0a",
+        "prerequisiteActionIds": [
+          "proc_open_support"
+        ],
+        "terminal": false
+      },
+      {
+        "id": "proc_submit_recovery_request",
+        "kind": "interact",
+        "label": "Submit recovery request",
+        "description": "Submit the Payment recovery request form to ask the recipient's bank to return the money from a completed transfer. Recovery is not guaranteed.",
+        "websiteActionId": "action_fd8698d94a9e2dd25f9e",
+        "prerequisiteActionIds": [
+          "proc_open_support",
+          "proc_provide_reference_and_recipient",
+          "proc_provide_description_and_email"
+        ],
+        "terminal": true
+      },
+      {
+        "id": "proc_submit_mistaken_report",
+        "kind": "interact",
+        "label": "Submit mistaken transfer report",
+        "description": "Submit the Report a mistaken transfer form, which creates a record and starts outreach but is not a recovery request.",
+        "websiteActionId": "action_1a4c47be86f1e1e46e08",
+        "prerequisiteActionIds": [
+          "proc_open_support"
+        ],
+        "terminal": true
+      }
+    ],
+    "goalActionIds": [
+      "proc_cancel_transfer",
+      "proc_submit_recovery_request",
+      "proc_submit_mistaken_report"
+    ],
+    "rules": [
+      {
+        "id": "rule_r1_prohibit_cancel_completed",
+        "actionId": "proc_cancel_transfer",
+        "appliesWhen": {
+          "kind": "fact",
+          "fact": "transfer_status",
+          "op": "eq",
+          "value": "completed"
+        },
+        "citations": [
+          {
+            "pageId": "page_3a3e5e3ef9304b5db72a",
+            "pageUrl": "http://127.0.0.1:5180/help/recovery",
+            "blockId": "block_d05c4b0d40cf058b55be",
+            "excerpt": "A completed transfer can't be canceled, but in some cases we can ask the recipient's bank to return the money.",
+            "actionIds": []
+          }
+        ],
+        "semanticConfidence": 0.95,
+        "needsReview": false,
+        "effect": "prohibit"
+      },
+      {
+        "id": "rule_r2_prohibit_cancel_processing_started",
+        "actionId": "proc_cancel_transfer",
+        "appliesWhen": {
+          "kind": "fact",
+          "fact": "processing_started",
+          "op": "eq",
+          "value": true
+        },
+        "citations": [
+          {
+            "pageId": "page_e78fd49ae38512a93640",
+            "pageUrl": "http://127.0.0.1:5180/help/transfers",
+            "blockId": "block_c6e0f05342f8d9849468",
+            "excerpt": "Cancellation depends on the state of the transfer at the moment you confirm, not at the moment you opened the page. If processing started while the page was open, we'll decline the request and leave the transfer unchanged. Reload the page to see the current status.",
+            "actionIds": []
+          }
+        ],
+        "semanticConfidence": 0.85,
+        "needsReview": false,
+        "effect": "prohibit"
+      },
+      {
+        "id": "rule_r3_permit_cancel_scheduled",
+        "actionId": "proc_cancel_transfer",
+        "appliesWhen": {
+          "kind": "all",
+          "conditions": [
+            {
+              "kind": "fact",
+              "fact": "transfer_status",
+              "op": "eq",
+              "value": "scheduled"
+            },
+            {
+              "kind": "fact",
+              "fact": "processing_started",
+              "op": "eq",
+              "value": false
+            }
+          ]
+        },
+        "citations": [
+          {
+            "pageId": "page_c5de9ba558c4f7c730d4",
+            "pageUrl": "http://127.0.0.1:5180/help",
+            "blockId": "block_204e9c13bd8562e22f1f",
+            "excerpt": "Canceling a transferWhen a scheduled transfer can be canceled and how we check it.",
+            "actionIds": []
+          },
+          {
+            "pageId": "page_e78fd49ae38512a93640",
+            "pageUrl": "http://127.0.0.1:5180/help/transfers",
+            "blockId": "block_c6e0f05342f8d9849468",
+            "excerpt": "Cancellation depends on the state of the transfer at the moment you confirm, not at the moment you opened the page. If processing started while the page was open, we'll decline the request and leave the transfer unchanged. Reload the page to see the current status.",
+            "actionIds": []
+          }
+        ],
+        "semanticConfidence": 0.4,
+        "needsReview": true,
+        "reviewReason": "The selected evidence only implies cancellation is possible for scheduled transfers and declined once processing starts. No explicit permission sentence with the full eligibility conditions was selected, and 'Some transfer types have their own rules' is not detailed.",
+        "effect": "permit"
+      },
+      {
+        "id": "rule_r4_permit_recovery_completed_self_initiated",
+        "actionId": "proc_submit_recovery_request",
+        "appliesWhen": {
+          "kind": "all",
+          "conditions": [
+            {
+              "kind": "fact",
+              "fact": "transfer_status",
+              "op": "eq",
+              "value": "completed"
+            },
+            {
+              "kind": "fact",
+              "fact": "initiated_by_user",
+              "op": "eq",
+              "value": true
+            }
+          ]
+        },
+        "citations": [
+          {
+            "pageId": "page_3a3e5e3ef9304b5db72a",
+            "pageUrl": "http://127.0.0.1:5180/help/recovery",
+            "blockId": "block_dd35d4ab423bc204bf21",
+            "excerpt": "No. A completed transfer may be eligible for a recovery request, but the outcome depends on the recipient's bank and on the recipient. The money may already have been spent or moved. We'll email you the outcome of your request.",
+            "actionIds": []
+          },
+          {
+            "pageId": "page_073918c6de8d74f49a40",
+            "pageUrl": "http://127.0.0.1:5180/support",
+            "blockId": "block_ef8db3de371a0edb6f58",
+            "excerpt": "Payment recovery: a transfer that has already completed and that you started yourself. See Recovering a completed transfer.",
+            "actionIds": [
+              "action_fd8698d94a9e2dd25f9e"
+            ]
+          }
+        ],
+        "semanticConfidence": 0.9,
+        "needsReview": true,
+        "reviewReason": "Recovery is explicitly not guaranteed (outcome depends on the recipient's bank and recipient); this warning cannot be represented as a condition, so eligibility does not imply a successful recovery.",
+        "effect": "permit"
+      },
+      {
+        "id": "rule_r5_prohibit_recovery_not_initiated",
+        "actionId": "proc_submit_recovery_request",
+        "appliesWhen": {
+          "kind": "fact",
+          "fact": "initiated_by_user",
+          "op": "eq",
+          "value": false
+        },
+        "citations": [
+          {
+            "pageId": "page_3a3e5e3ef9304b5db72a",
+            "pageUrl": "http://127.0.0.1:5180/help/recovery",
+            "blockId": "block_e841eb9eb431aa29440b",
+            "excerpt": "A transfer that you didn't start or authorize is not a mistaken transfer. Don't use the recovery or mistaken transfer forms for it. Follow the separate process described in Unauthorized transfers.",
+            "actionIds": []
+          }
+        ],
+        "semanticConfidence": 0.9,
+        "needsReview": false,
+        "effect": "prohibit"
+      },
+      {
+        "id": "rule_r6_require_recovery_reference_and_recipient",
+        "actionId": "proc_submit_recovery_request",
+        "appliesWhen": {
+          "kind": "always"
+        },
+        "citations": [
+          {
+            "pageId": "page_3a3e5e3ef9304b5db72a",
+            "pageUrl": "http://127.0.0.1:5180/help/recovery",
+            "blockId": "block_b9b4f21bf280d76622d6",
+            "excerpt": "We can't open a recovery request without the reference number and the recipient's information.",
+            "actionIds": []
+          },
+          {
+            "pageId": "page_3a3e5e3ef9304b5db72a",
+            "pageUrl": "http://127.0.0.1:5180/help/recovery",
+            "blockId": "block_ff04ebd9a588779a2ffa",
+            "excerpt": "the transaction reference number, which appears on the transfer details page and in your confirmation email;",
+            "actionIds": []
+          }
+        ],
+        "semanticConfidence": 0.9,
+        "needsReview": false,
+        "effect": "require_action",
+        "requiredActionId": "proc_provide_reference_and_recipient"
+      },
+      {
+        "id": "rule_r7_require_recovery_description_and_email",
+        "actionId": "proc_submit_recovery_request",
+        "appliesWhen": {
+          "kind": "always"
+        },
+        "citations": [
+          {
+            "pageId": "page_3a3e5e3ef9304b5db72a",
+            "pageUrl": "http://127.0.0.1:5180/help/recovery",
+            "blockId": "block_2b3415b136b7301a551f",
+            "excerpt": "a short description of what happened and an email address where we can reach you.",
+            "actionIds": []
+          }
+        ],
+        "semanticConfidence": 0.9,
+        "needsReview": false,
+        "effect": "require_action",
+        "requiredActionId": "proc_provide_description_and_email"
+      },
+      {
+        "id": "rule_r8_require_instant_completed_before_recovery",
+        "actionId": "proc_submit_recovery_request",
+        "appliesWhen": {
+          "kind": "fact",
+          "fact": "transfer_type",
+          "op": "eq",
+          "value": "instant"
+        },
+        "citations": [
+          {
+            "pageId": "page_d01fb7cef56b70be985a",
+            "pageUrl": "http://127.0.0.1:5180/help/instant-transfers",
+            "blockId": "block_b88b983d72fc28c65c0d",
+            "excerpt": "Wait until the transfer shows Completed, then follow the steps in Recovering a completed transfer. Recovery isn't guaranteed.",
+            "actionIds": []
+          }
+        ],
+        "semanticConfidence": 0.85,
+        "needsReview": false,
+        "effect": "require_condition",
+        "requirement": {
+          "kind": "fact",
+          "fact": "transfer_status",
+          "op": "eq",
+          "value": "completed"
+        }
+      }
+    ]
+  },
+  "evidenceResult": {
+    "schemaVersion": 1,
+    "id": "evidence_offlinedemo01",
+    "snapshotId": "snapshot_41d0d491900cfebb6179",
+    "snapshotHash": "f5da7bac2d0034f4b4b689945047784c9856dfc32bb47ebbdb50354485b8f214",
+    "procedureModelId": "procedure_map_cancel_wrong_recipient_transfer",
+    "checkedAt": "2026-10-17T10:00:46.688Z",
+    "status": "degraded",
+    "validRuleIds": [
+      "rule_r1_prohibit_cancel_completed",
+      "rule_r2_prohibit_cancel_processing_started",
+      "rule_r5_prohibit_recovery_not_initiated",
+      "rule_r6_require_recovery_reference_and_recipient",
+      "rule_r7_require_recovery_description_and_email",
+      "rule_r8_require_instant_completed_before_recovery"
+    ],
+    "rejectedRuleIds": [
+      "rule_r3_permit_cancel_scheduled",
+      "rule_r4_permit_recovery_completed_self_initiated"
+    ],
+    "verifiedWebsiteActionIds": [
+      "action_01c0d8b206bdb31bf0d0",
+      "action_02031e0b19e89aee42b6",
+      "action_0a9bbe565d520aa700c1",
+      "action_0d903b0c8f2676db1b25",
+      "action_11efd6765443c18d7f73",
+      "action_18f14ea29676c935acac",
+      "action_1916ec99980a998f350e",
+      "action_193bc49a7457853726ec",
+      "action_1a4c47be86f1e1e46e08",
+      "action_1a62f2a6f52044f0680f",
+      "action_2a2c34711c21e7489bb3",
+      "action_31390be6c40504df4f6e",
+      "action_32cceb81ef37a968aec3",
+      "action_349008a142eff01043cd",
+      "action_3601d24549fb47d5c601",
+      "action_3906f07e9fec47ee2e5a",
+      "action_398b370188d32e4368a8",
+      "action_3aa0537945e83e11056d",
+      "action_3b85e3bb5737f1f7fbde",
+      "action_3cf6f7356506bafe63af",
+      "action_43d4c9c25b9d3fa70e54",
+      "action_455e3d6aac982121529b",
+      "action_48b13cf7c7e41c520bd9",
+      "action_49fd897e20d1d5304ac9",
+      "action_4b84d50b42b741137b83",
+      "action_5098085d9a6fb3680723",
+      "action_53e7afec6c1b384e62e0",
+      "action_55bbf34fb4067f8ad5cf",
+      "action_591520e4d69f8ed63f5f",
+      "action_59b956c2f588a1f874d0",
+      "action_62fac01ac7274c2fd784",
+      "action_6437e22bfd6a707a9b13",
+      "action_66e4a8c4af607741a1f9",
+      "action_66f7cde433187d789f19",
+      "action_67aa52e1a2a560337e42",
+      "action_67fbb41007b2de0e224d",
+      "action_6d4aec43f8b72de6c9d2",
+      "action_70610241f9d463c514a0",
+      "action_7097cce2326c66aa756f",
+      "action_727a952610474eaaa8c3",
+      "action_76f72e553f4adde41522",
+      "action_77980f4729ee88c48d31",
+      "action_7c0f523f610e7f387f0a",
+      "action_7c849da67b96783140aa",
+      "action_7fb1fb4d28f388b68975",
+      "action_82a000191ec2104cbc93",
+      "action_82dd38c108e1596a10b1",
+      "action_868c5ec00244ddfb81b6",
+      "action_8804af5def5cd3216b9f",
+      "action_967e22693ac7e0e8a47b",
+      "action_a4162248500b4dff5d14",
+      "action_a5027110e5727dc8421d",
+      "action_a5dd7543b051ed71ce9c",
+      "action_a775ae25eec2f83c4bd8",
+      "action_a885be018d6f42126ce8",
+      "action_ac5e7a20f5fa051e5316",
+      "action_ad7e2b96bd50697b2846",
+      "action_ae3c76bca83b94a0ecb3",
+      "action_ae8373850170e30db192",
+      "action_aec47f50b2dca11b1480",
+      "action_b0eeb7d8611f164a589d",
+      "action_b1bb0b917fc4677e5d0b",
+      "action_b1dd94ef46626c56625b",
+      "action_b2b0b4cbf94e88d7974f",
+      "action_b42a53fe406dbed89f8e",
+      "action_b53dece2956d308734d2",
+      "action_b832aea9c04879e89d9e",
+      "action_b87bbe2257e7eec583c2",
+      "action_b987bdc2ed1a5d25cef3",
+      "action_bbfd1f0ede818859f9d7",
+      "action_bf4b71382d52393a8086",
+      "action_c051902df5bd600953da",
+      "action_c1176c8da0dbcb8d5fbe",
+      "action_c14da91b296386f93e47",
+      "action_c2682c726d777e119df5",
+      "action_c5ecd52a9069aa42d2c9",
+      "action_c6e427c180acbade63cb",
+      "action_c7c9e83a3465915c31f9",
+      "action_c7d787115f6df14c5c9e",
+      "action_cd543f2b089860d00e63",
+      "action_cec971f543cc085511e5",
+      "action_d005d5668f5f84b74d0a",
+      "action_d0e7c3a4299e5922a954",
+      "action_d230d16f5b8ae26d7990",
+      "action_d25589be552fc2575881",
+      "action_d39f943aeab24e4304d1",
+      "action_dba2db4a1cc3b8bb2ba2",
+      "action_e05066ffc758db55d49c",
+      "action_e3892e11951cdfb4945f",
+      "action_e4358ac5d52280317381",
+      "action_e90b54ee0ded3083919c",
+      "action_ea7090b370cb32af4242",
+      "action_eaaad48c2b0c1d2fb51a",
+      "action_eb2d466705566fa1c6a0",
+      "action_eb34dcb5ad21e4bf41e4",
+      "action_eb83d7f6b64fd744394b",
+      "action_ecadc8342ecb6dccfde3",
+      "action_edfd7ffe93ae394f03bf",
+      "action_ee9b8ce5f6af4ff5aff5",
+      "action_f57348705b1e650e1e2e",
+      "action_f5fb27ebaaf91e85f854",
+      "action_f6e154d9410350b68d67",
+      "action_f776a84f874b0d4e644c",
+      "action_f81fed3579399fbf7b24",
+      "action_f841bf623394deacc83b",
+      "action_f9e06b5ad81b74b3c6d2",
+      "action_fd8698d94a9e2dd25f9e"
+    ],
+    "executableProcedureActionIds": [
+      "proc_cancel_transfer",
+      "proc_open_support",
+      "proc_provide_description_and_email",
+      "proc_provide_reference_and_recipient",
+      "proc_submit_mistaken_report",
+      "proc_submit_recovery_request"
+    ],
+    "issues": [
+      {
+        "severity": "error",
+        "code": "SEMANTIC_REVIEW_REQUIRED",
+        "message": "The selected evidence only implies cancellation is possible for scheduled transfers and declined once processing starts. No explicit permission sentence with the full eligibility conditions was selected, and 'Some transfer types have their own rules' is not detailed.",
+        "ruleId": "rule_r3_permit_cancel_scheduled"
+      },
+      {
+        "severity": "error",
+        "code": "SEMANTIC_REVIEW_REQUIRED",
+        "message": "Recovery is explicitly not guaranteed (outcome depends on the recipient's bank and recipient); this warning cannot be represented as a condition, so eligibility does not imply a successful recovery.",
+        "ruleId": "rule_r4_permit_recovery_completed_self_initiated"
+      }
+    ]
+  },
+  "evaluatorPlannerScenarios": [
+    {
+      "name": "scheduled_not_started",
+      "userState": {
+        "schemaVersion": 1,
+        "revision": 1,
+        "facts": {
+          "transfer_status": "scheduled",
+          "processing_started": false,
+          "initiated_by_user": true,
+          "transfer_type": "scheduled"
+        }
+      },
+      "evaluation": {
+        "schemaVersion": 1,
+        "procedureModelId": "procedure_map_cancel_wrong_recipient_transfer",
+        "evidenceResultId": "evidence_offlinedemo01",
+        "userStateRevision": 1,
+        "status": "evaluated",
+        "decisions": [
+          {
+            "actionId": "proc_cancel_transfer",
+            "status": "review",
+            "reasonCodes": [
+              "EVIDENCE_REJECTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_open_support",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_provide_description_and_email",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_provide_reference_and_recipient",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_submit_mistaken_report",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_submit_recovery_request",
+            "status": "review",
+            "reasonCodes": [
+              "EVIDENCE_REJECTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [
+              "rule_r6_require_recovery_reference_and_recipient",
+              "rule_r7_require_recovery_description_and_email"
+            ],
+            "requiredActionIds": [
+              "proc_provide_description_and_email",
+              "proc_provide_reference_and_recipient"
+            ]
+          }
+        ],
+        "reasonCodes": []
+      },
+      "plan": {
+        "schemaVersion": 1,
+        "id": "plan_offlinedemo01",
+        "generatedAt": "2026-10-17T10:00:46.688Z",
+        "status": "review_required",
+        "snapshotId": "snapshot_41d0d491900cfebb6179",
+        "snapshotHash": "f5da7bac2d0034f4b4b689945047784c9856dfc32bb47ebbdb50354485b8f214",
+        "procedureModelId": "procedure_map_cancel_wrong_recipient_transfer",
+        "evidenceResultId": "evidence_offlinedemo01",
+        "userStateRevision": 1,
+        "userStateHash": "080890f1aecece8d90949dce9e5b44a89b66d074ffdce9f90b29d8a5e60aa080",
+        "steps": [],
+        "missingFacts": [],
+        "reasonCodes": [
+          "EVIDENCE_REJECTED"
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "completed_self_initiated",
+      "userState": {
+        "schemaVersion": 1,
+        "revision": 2,
+        "facts": {
+          "transfer_status": "completed",
+          "processing_started": true,
+          "initiated_by_user": true,
+          "transfer_type": "scheduled"
+        }
+      },
+      "evaluation": {
+        "schemaVersion": 1,
+        "procedureModelId": "procedure_map_cancel_wrong_recipient_transfer",
+        "evidenceResultId": "evidence_offlinedemo01",
+        "userStateRevision": 2,
+        "status": "evaluated",
+        "decisions": [
+          {
+            "actionId": "proc_cancel_transfer",
+            "status": "review",
+            "reasonCodes": [
+              "EVIDENCE_REJECTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [
+              "rule_r1_prohibit_cancel_completed",
+              "rule_r2_prohibit_cancel_processing_started"
+            ],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_open_support",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_provide_description_and_email",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_provide_reference_and_recipient",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_submit_mistaken_report",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_submit_recovery_request",
+            "status": "review",
+            "reasonCodes": [
+              "EVIDENCE_REJECTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [
+              "rule_r6_require_recovery_reference_and_recipient",
+              "rule_r7_require_recovery_description_and_email"
+            ],
+            "requiredActionIds": [
+              "proc_provide_description_and_email",
+              "proc_provide_reference_and_recipient"
+            ]
+          }
+        ],
+        "reasonCodes": []
+      },
+      "plan": {
+        "schemaVersion": 1,
+        "id": "plan_offlinedemo02",
+        "generatedAt": "2026-10-17T10:00:46.688Z",
+        "status": "review_required",
+        "snapshotId": "snapshot_41d0d491900cfebb6179",
+        "snapshotHash": "f5da7bac2d0034f4b4b689945047784c9856dfc32bb47ebbdb50354485b8f214",
+        "procedureModelId": "procedure_map_cancel_wrong_recipient_transfer",
+        "evidenceResultId": "evidence_offlinedemo01",
+        "userStateRevision": 2,
+        "userStateHash": "5338c46b489f2a9526cd7615a910b09217efe8a4a6810b4899522aa80ed856bc",
+        "steps": [],
+        "missingFacts": [],
+        "reasonCodes": [
+          "EVIDENCE_REJECTED"
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "completed_not_self_initiated",
+      "userState": {
+        "schemaVersion": 1,
+        "revision": 3,
+        "facts": {
+          "transfer_status": "completed",
+          "processing_started": true,
+          "initiated_by_user": false,
+          "transfer_type": "scheduled"
+        }
+      },
+      "evaluation": {
+        "schemaVersion": 1,
+        "procedureModelId": "procedure_map_cancel_wrong_recipient_transfer",
+        "evidenceResultId": "evidence_offlinedemo01",
+        "userStateRevision": 3,
+        "status": "evaluated",
+        "decisions": [
+          {
+            "actionId": "proc_cancel_transfer",
+            "status": "review",
+            "reasonCodes": [
+              "EVIDENCE_REJECTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [
+              "rule_r1_prohibit_cancel_completed",
+              "rule_r2_prohibit_cancel_processing_started"
+            ],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_open_support",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_provide_description_and_email",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_provide_reference_and_recipient",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_submit_mistaken_report",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_submit_recovery_request",
+            "status": "review",
+            "reasonCodes": [
+              "EVIDENCE_REJECTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [
+              "rule_r5_prohibit_recovery_not_initiated",
+              "rule_r6_require_recovery_reference_and_recipient",
+              "rule_r7_require_recovery_description_and_email"
+            ],
+            "requiredActionIds": [
+              "proc_provide_description_and_email",
+              "proc_provide_reference_and_recipient"
+            ]
+          }
+        ],
+        "reasonCodes": []
+      },
+      "plan": {
+        "schemaVersion": 1,
+        "id": "plan_offlinedemo03",
+        "generatedAt": "2026-10-17T10:00:46.688Z",
+        "status": "review_required",
+        "snapshotId": "snapshot_41d0d491900cfebb6179",
+        "snapshotHash": "f5da7bac2d0034f4b4b689945047784c9856dfc32bb47ebbdb50354485b8f214",
+        "procedureModelId": "procedure_map_cancel_wrong_recipient_transfer",
+        "evidenceResultId": "evidence_offlinedemo01",
+        "userStateRevision": 3,
+        "userStateHash": "af3a79dbbce0aebae9432f5ca3587dae1cc748c8f51587605aaea679833aa655",
+        "steps": [],
+        "missingFacts": [],
+        "reasonCodes": [
+          "EVIDENCE_REJECTED"
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "instant_completed_self_initiated",
+      "userState": {
+        "schemaVersion": 1,
+        "revision": 4,
+        "facts": {
+          "transfer_status": "completed",
+          "processing_started": true,
+          "initiated_by_user": true,
+          "transfer_type": "instant"
+        }
+      },
+      "evaluation": {
+        "schemaVersion": 1,
+        "procedureModelId": "procedure_map_cancel_wrong_recipient_transfer",
+        "evidenceResultId": "evidence_offlinedemo01",
+        "userStateRevision": 4,
+        "status": "evaluated",
+        "decisions": [
+          {
+            "actionId": "proc_cancel_transfer",
+            "status": "review",
+            "reasonCodes": [
+              "EVIDENCE_REJECTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [
+              "rule_r1_prohibit_cancel_completed",
+              "rule_r2_prohibit_cancel_processing_started"
+            ],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_open_support",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_provide_description_and_email",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_provide_reference_and_recipient",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_submit_mistaken_report",
+            "status": "forbidden",
+            "reasonCodes": [
+              "NOT_PERMITTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [],
+            "requiredActionIds": []
+          },
+          {
+            "actionId": "proc_submit_recovery_request",
+            "status": "review",
+            "reasonCodes": [
+              "EVIDENCE_REJECTED"
+            ],
+            "missingFacts": [],
+            "citationRuleIds": [
+              "rule_r6_require_recovery_reference_and_recipient",
+              "rule_r7_require_recovery_description_and_email",
+              "rule_r8_require_instant_completed_before_recovery"
+            ],
+            "requiredActionIds": [
+              "proc_provide_description_and_email",
+              "proc_provide_reference_and_recipient"
+            ]
+          }
+        ],
+        "reasonCodes": []
+      },
+      "plan": {
+        "schemaVersion": 1,
+        "id": "plan_offlinedemo04",
+        "generatedAt": "2026-10-17T10:00:46.688Z",
+        "status": "review_required",
+        "snapshotId": "snapshot_41d0d491900cfebb6179",
+        "snapshotHash": "f5da7bac2d0034f4b4b689945047784c9856dfc32bb47ebbdb50354485b8f214",
+        "procedureModelId": "procedure_map_cancel_wrong_recipient_transfer",
+        "evidenceResultId": "evidence_offlinedemo01",
+        "userStateRevision": 4,
+        "userStateHash": "349f291d3d3eaf0c9559cfc14275d19b6f59be37482e2ff996fd2e674b2e587e",
+        "steps": [],
+        "missingFacts": [],
+        "reasonCodes": [
+          "EVIDENCE_REJECTED"
+        ],
+        "warnings": []
+      }
+    }
+  ]
+}

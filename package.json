@@ -1,0 +1,46 @@
+{
+  "name": "bureaucracy-slayer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Evidence-first policy evaluation and deterministic planning foundation.",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --configLoader runner",
+    "test:watch": "vitest",
+    "demo": "node --require ./scripts/tsx-windows-user-shim.cjs --import tsx ./scripts/demo.ts",
+    "portal:dev": "npm --prefix mock-portal run dev",
+    "portal:build": "npm --prefix mock-portal run build",
+    "portal:preview": "npm --prefix mock-portal run preview",
+    "dev:server": "node --require ./scripts/tsx-windows-user-shim.cjs --import tsx ./src/server/live-extraction-server.ts",
+    "dev:mock-api": "node --require ./scripts/tsx-windows-user-shim.cjs --import tsx ./scripts/mock-live-extraction-server.ts",
+    "dev:mock-api:failed": "npm run dev:mock-api -- --failed",
+    "test:live-extract": "node --require ./scripts/tsx-windows-user-shim.cjs --import tsx ./scripts/live-extraction.ts",
+    "build:recorded": "node --require ./scripts/tsx-windows-user-shim.cjs --import tsx ./scripts/build-recorded-extraction-bundle.ts",
+    "dev:ui": "vite --config vite.ui.config.ts --configLoader runner",
+    "build:ui": "npm run build:recorded && vite build --config vite.ui.config.ts --configLoader runner",
+    "preview:ui": "vite preview --config vite.ui.config.ts --configLoader runner",
+    "test:ui": "vitest run tests/ui --configLoader runner",
+    "test:live-integration": "vitest run tests/integration/live-extraction-api-security.test.ts tests/integration/live-extraction-premerge.test.ts tests/integration/live-extraction-server.test.ts --configLoader runner"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.135.0",
+    "@noble/hashes": "1.8.0",
+    "playwright": "1.64.1",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "4.1.12"
+  }
+}
