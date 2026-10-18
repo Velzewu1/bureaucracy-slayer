@@ -124,13 +124,13 @@ describe("goal-focused source selection", () => {
         goal: "Can I request recovery for a completed transfer?",
         purpose: "Request recovery of a completed transfer",
         requiredBlockId: "block_dd35d4ab423bc204bf21",
-        expectedCounts: { pages: 9, blocks: 66, actions: 24 },
+        expectedCounts: { pages: 9, blocks: 68, actions: 24 },
       },
       {
         goal: "What information do I need to submit a recovery request?",
         purpose: "Submit recovery request",
         requiredBlockId: "block_b9b4f21bf280d76622d6",
-        expectedCounts: { pages: 9, blocks: 67, actions: 27 },
+        expectedCounts: { pages: 9, blocks: 69, actions: 27 },
       },
     ] as const;
 
@@ -183,6 +183,7 @@ describe("goal-focused source selection", () => {
       expect(selection.selectedCounts.actions).toBeLessThanOrEqual(35);
       expect(actionLabels.some((label) => /unauthorized/i.test(label))).toBe(true);
       expect(actionLabels).toContain(scope?.primaryActionPurpose);
+      expect(selectedBlockIds(selection)).toContain("block_8e2ce14c3ab15f83b3fe");
     }
 
     const mistakenGoal = "I mistakenly sent money to the wrong recipient.";
@@ -284,6 +285,7 @@ describe("goal-focused source selection", () => {
     expect(selection.selectedCounts.actions).toBeLessThanOrEqual(35);
     expect(blockIds).toContain("block_eef1c957489ad4e255e6");
     expect(blockIds).toContain("block_8bb8dc91e491d3813852");
+    expect(blockIds).toContain("block_09f299055686b41683ed");
     expect(actionLabels.some((label) => /recover/i.test(label))).toBe(true);
     expect(selectFocusedSources(
       snapshot,

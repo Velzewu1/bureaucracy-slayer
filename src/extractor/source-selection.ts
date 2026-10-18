@@ -695,6 +695,25 @@ function contextualBlockIndexes(
       result.add(index + 1);
     }
   }
+  // A colon-introduced requirement list is one evidence unit. Retaining only
+  // adjacent matches can otherwise omit a mandatory item in the middle while
+  // keeping the introduction and final restriction. Keep this bounded and stop
+  // at the first sentence-terminating item.
+  for (const index of [...result]) {
+    const block = page.blocks[index];
+    if (
+      block === undefined ||
+      !directIndexes.has(index) ||
+      !/\b(?:requires|need(?:s|ed)?\s+to):\s*$/iu.test(block.text.trim())
+    ) continue;
+    const finalIndex = Math.min(page.blocks.length - 1, index + 8);
+    for (let candidate = index + 1; candidate <= finalIndex; candidate += 1) {
+      const item = page.blocks[candidate];
+      if (item === undefined) break;
+      result.add(candidate);
+      if (/[.!?]["')\]]?\s*$/u.test(item.text.trim())) break;
+    }
+  }
   return result;
 }
 
