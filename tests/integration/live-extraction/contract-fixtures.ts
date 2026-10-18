@@ -26,10 +26,15 @@ export const LIVE_TEST_GOAL =
   "I sent an $850 transfer to the wrong recipient. Can I cancel it? If not, what are my alternatives?";
 export const LIVE_TEST_CANCELLATION_GOAL =
   "Can I cancel a scheduled Standard transfer before processing starts?";
+export const LIVE_DEMO_CANCELLATION_GOAL = "Can I cancel my scheduled bank transfer?";
 export const LIVE_TEST_RECOVERY_GOAL =
   "Can I request recovery for a completed transfer?";
+export const LIVE_DEMO_MISTAKEN_RECOVERY_GOAL =
+  "I completed a transfer to the wrong recipient. How can I request recovery?";
 export const LIVE_TEST_RECOVERY_PREREQUISITES_GOAL =
   "What information do I need to submit a recovery request?";
+export const LIVE_TEST_UNAUTHORIZED_GOAL =
+  "I found a transfer I did not authorize. What should I do?";
 export const LIVE_TEST_PORTAL_URL = "http://127.0.0.1:5180/dashboard";
 export const LIVE_TEST_JOB_ID = "job_1234567890abcdef1234567890abcdef";
 export const LIVE_TEST_REQUEST_ID = "request_1234567890abcdef1234567890abcdef";
@@ -107,7 +112,7 @@ function deterministicModelForGoal(goal: string) {
     throw new Error(`Missing deterministic fixture block ${blockId}.`);
   };
 
-  if (goal === LIVE_TEST_CANCELLATION_GOAL) {
+  if (goal === LIVE_TEST_CANCELLATION_GOAL || goal === LIVE_DEMO_CANCELLATION_GOAL) {
     return ProcedureModelSchema.parse({
       schemaVersion: 1,
       id: "procedure_fixture_cancel_transfer",
@@ -210,17 +215,181 @@ function deterministicModelForGoal(goal: string) {
     });
   }
 
+  if (goal === LIVE_TEST_UNAUTHORIZED_GOAL) {
+    return ProcedureModelSchema.parse({
+      schemaVersion: 1,
+      id: "procedure_fixture_unauthorized_transfer",
+      sourceSnapshotId: snapshot.id,
+      sourceSnapshotHash: snapshot.contentHash,
+      extractedAt: COMPLETED_AT,
+      goalSummary:
+        "Identify whether an unrecognized transfer uses the unauthorized report or must not be filed as a mistaken transfer.",
+      factDefinitions: [
+        {
+          key: "initiated_by_user",
+          label: "User started the transfer themselves",
+          type: "boolean",
+          sensitive: false,
+        },
+      ],
+      actions: [
+        {
+          id: "proc_open_unauthorized_form",
+          kind: "navigate",
+          label: "Open the unauthorized transfer report",
+          description: "Open the observed Report an unauthorized transfer link.",
+          websiteActionId: "action_455e3d6aac982121529b",
+          prerequisiteActionIds: [],
+          terminal: false,
+        },
+        {
+          id: "proc_identify_unrecognized_transfer",
+          kind: "user_task",
+          label: "Identify the unrecognized transfer",
+          description: "Supply the reference number, or the date and amount, for the transfer.",
+          prerequisiteActionIds: [],
+          terminal: false,
+        },
+        {
+          id: "proc_report_notice_and_account_security",
+          kind: "user_task",
+          label: "Report when you noticed it and whether the account is secured",
+          description: "Tell Northstar the date you first noticed the transfer and whether the account was secured.",
+          prerequisiteActionIds: [],
+          terminal: false,
+        },
+        {
+          id: "proc_submit_unauthorized_report",
+          kind: "interact",
+          label: "Submit unauthorized transfer report",
+          description: "Submit the observed unauthorized-transfer report. Guidance only; nothing is submitted automatically.",
+          websiteActionId: "action_d230d16f5b8ae26d7990",
+          prerequisiteActionIds: [
+            "proc_open_unauthorized_form",
+            "proc_identify_unrecognized_transfer",
+            "proc_report_notice_and_account_security",
+          ],
+          terminal: true,
+        },
+        {
+          id: "proc_submit_mistaken_report",
+          kind: "interact",
+          label: "Submit mistaken transfer report",
+          description: "The mistaken-transfer form is a different procedure from an unauthorized report.",
+          websiteActionId: "action_1a4c47be86f1e1e46e08",
+          prerequisiteActionIds: [],
+          terminal: true,
+        },
+      ],
+      goalActionIds: ["proc_submit_unauthorized_report", "proc_submit_mistaken_report"],
+      rules: [
+        {
+          id: "rule_fixture_permit_unauthorized_report",
+          actionId: "proc_submit_unauthorized_report",
+          appliesWhen: { kind: "fact", fact: "initiated_by_user", op: "eq", value: false },
+          citations: [blockCitation("block_aac34263e3a080f70ed2")],
+          semanticConfidence: 1,
+          needsReview: false,
+          effect: "permit",
+        },
+        {
+          id: "rule_fixture_permit_open_unauthorized_form",
+          actionId: "proc_open_unauthorized_form",
+          appliesWhen: { kind: "fact", fact: "initiated_by_user", op: "eq", value: false },
+          citations: [blockCitation("block_aac34263e3a080f70ed2")],
+          semanticConfidence: 1,
+          needsReview: false,
+          effect: "permit",
+        },
+        {
+          id: "rule_fixture_permit_unauthorized_identity",
+          actionId: "proc_identify_unrecognized_transfer",
+          appliesWhen: { kind: "fact", fact: "initiated_by_user", op: "eq", value: false },
+          citations: [blockCitation("block_5b50aae8d3e4fa18f7a6")],
+          semanticConfidence: 1,
+          needsReview: false,
+          effect: "permit",
+        },
+        {
+          id: "rule_fixture_permit_unauthorized_notice",
+          actionId: "proc_report_notice_and_account_security",
+          appliesWhen: { kind: "fact", fact: "initiated_by_user", op: "eq", value: false },
+          citations: [
+            blockCitation("block_8e2ce14c3ab15f83b3fe"),
+            blockCitation("block_4ed17b376dfb6f410a47"),
+          ],
+          semanticConfidence: 1,
+          needsReview: false,
+          effect: "permit",
+        },
+        {
+          id: "rule_fixture_prohibit_unauthorized_when_self_started",
+          actionId: "proc_submit_unauthorized_report",
+          appliesWhen: { kind: "fact", fact: "initiated_by_user", op: "eq", value: true },
+          citations: [blockCitation("block_6230c45471a8299492f3")],
+          semanticConfidence: 1,
+          needsReview: false,
+          effect: "prohibit",
+        },
+        {
+          id: "rule_fixture_prohibit_mistaken_when_not_started",
+          actionId: "proc_submit_mistaken_report",
+          appliesWhen: { kind: "fact", fact: "initiated_by_user", op: "eq", value: false },
+          citations: [blockCitation("block_e841eb9eb431aa29440b")],
+          semanticConfidence: 1,
+          needsReview: false,
+          effect: "prohibit",
+        },
+        {
+          id: "rule_fixture_permit_mistaken_when_self_started",
+          actionId: "proc_submit_mistaken_report",
+          appliesWhen: { kind: "fact", fact: "initiated_by_user", op: "eq", value: true },
+          citations: [blockCitation("block_6230c45471a8299492f3")],
+          semanticConfidence: 1,
+          needsReview: false,
+          effect: "permit",
+        },
+        {
+          id: "rule_fixture_require_unauthorized_identity",
+          actionId: "proc_submit_unauthorized_report",
+          appliesWhen: { kind: "always" },
+          citations: [blockCitation("block_5b50aae8d3e4fa18f7a6")],
+          semanticConfidence: 1,
+          needsReview: false,
+          effect: "require_action",
+          requiredActionId: "proc_identify_unrecognized_transfer",
+        },
+        {
+          id: "rule_fixture_require_unauthorized_notice",
+          actionId: "proc_submit_unauthorized_report",
+          appliesWhen: { kind: "always" },
+          citations: [
+            blockCitation("block_8e2ce14c3ab15f83b3fe"),
+            blockCitation("block_4ed17b376dfb6f410a47"),
+          ],
+          semanticConfidence: 1,
+          needsReview: false,
+          effect: "require_action",
+          requiredActionId: "proc_report_notice_and_account_security",
+        },
+      ],
+    });
+  }
+
   if (
     goal === LIVE_TEST_RECOVERY_GOAL ||
-    goal === LIVE_TEST_RECOVERY_PREREQUISITES_GOAL
+    goal === LIVE_TEST_RECOVERY_PREREQUISITES_GOAL ||
+    goal === LIVE_DEMO_MISTAKEN_RECOVERY_GOAL
   ) {
     const keepActions = new Set([
+      "proc_cancel_transfer",
       "proc_open_support",
       "proc_provide_reference_and_recipient",
       "proc_provide_description_and_email",
       "proc_submit_recovery_request",
     ]);
     const keepRules = new Set([
+      "rule_r1_prohibit_cancel_completed",
       "rule_r4_permit_recovery_completed_self_initiated",
       "rule_r5_prohibit_recovery_not_initiated",
       "rule_r6_require_recovery_reference_and_recipient",
@@ -231,15 +400,15 @@ function deterministicModelForGoal(goal: string) {
     return ProcedureModelSchema.parse({
       ...model,
       id:
-        goal === LIVE_TEST_RECOVERY_GOAL
-          ? "procedure_fixture_completed_recovery"
-          : "procedure_fixture_recovery_requirements",
+        goal === LIVE_TEST_RECOVERY_PREREQUISITES_GOAL
+          ? "procedure_fixture_recovery_requirements"
+          : "procedure_fixture_completed_recovery",
       goalSummary:
-        goal === LIVE_TEST_RECOVERY_GOAL
-          ? "Determine eligibility and the grounded steps for requesting recovery of a completed transfer."
-          : "Identify the information and steps required to submit a completed-transfer recovery request.",
+        goal === LIVE_TEST_RECOVERY_PREREQUISITES_GOAL
+          ? "Identify the information and steps required to submit a completed-transfer recovery request."
+          : "Determine eligibility and the grounded steps for requesting recovery of a completed transfer.",
       actions: model.actions.filter((action) => keepActions.has(action.id)),
-      goalActionIds: ["proc_submit_recovery_request"],
+      goalActionIds: ["proc_cancel_transfer", "proc_submit_recovery_request"],
       rules: model.rules
         .filter((rule) => keepRules.has(rule.id))
         .map((rule) =>
@@ -257,6 +426,7 @@ function deterministicModelForGoal(goal: string) {
         ),
     });
   }
+
   return undefined;
 }
 
