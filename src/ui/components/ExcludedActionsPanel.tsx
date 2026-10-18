@@ -37,7 +37,10 @@ export function ExcludedActionsPanel({ analysis }: ExcludedActionsPanelProps) {
                   <span className="decision-status">{action.status}</span>
                   <h3>{action.label}</h3>
                 </div>
-                <code>{action.id}</code>
+                <details className="technical-details">
+                  <summary>Action identifier</summary>
+                  <code>{action.id}</code>
+                </details>
               </div>
               <ul>
                 {action.reasons.map((reason, index) => (

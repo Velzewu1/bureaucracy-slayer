@@ -10,22 +10,23 @@ type PersonalizationPlaceholderProps = Readonly<{
 const presentation: Readonly<
   Record<
     PersonalizationPlaceholderState,
-    Readonly<{ label: string; message: string }>
+    Readonly<{ heading: string; message: string; support: string }>
   >
 > = {
   waiting: {
-    label: "Questions pending verification",
-    message:
-      "Relevant questions will appear after the website policies have been extracted and verified.",
+    heading: "Your situation",
+    message: "We'll ask the relevant questions once the website's rules have been verified.",
+    support: "Start by analyzing the website.",
   },
   identifying: {
-    label: "Identifying relevant questions",
-    message: "Identifying which facts matter for your situation…",
+    heading: "Checking the website",
+    message: "Relevant questions will appear here when verification finishes.",
+    support: "This step does not ask for facts yet.",
   },
   unavailable: {
-    label: "Personalization unavailable",
-    message:
-      "Verified questions are unavailable for this run. No facts or guidance from an earlier Live result are being shown.",
+    heading: "Questions unavailable",
+    message: "This run did not produce verified questions. No earlier answers are being shown.",
+    support: "Use the header action to try again. Earlier answers are not kept.",
   },
 };
 
@@ -38,7 +39,6 @@ export function PersonalizationPlaceholder({
     <section
       className={`panel facts-panel facts-panel--placeholder facts-panel--${state}`}
       aria-labelledby="facts-heading"
-      aria-disabled="true"
       aria-live="polite"
       data-testid="live-personalization-placeholder"
     >
@@ -46,24 +46,15 @@ export function PersonalizationPlaceholder({
         <div>
           <span className="section-number">02</span>
           <div>
-            <p className="eyebrow">Personalize the decision</p>
-            <h2 id="facts-heading">{copy.label}</h2>
+            <p className="eyebrow">Questions</p>
+            <h2 id="facts-heading">{copy.heading}</h2>
           </div>
         </div>
-        <span className="revision-label">Not available yet</span>
       </div>
 
-      <p className="panel-intro">{copy.message}</p>
-
-      <div className="personalization-placeholder" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </div>
-
-      <div className="personalization-safety-note">
-        <span aria-hidden="true">—</span>
-        Questions remain disabled until their canonical definitions pass verification.
+      <div className="situation-empty">
+        <p>{copy.message}</p>
+        <p className="situation-empty__next">{copy.support}</p>
       </div>
     </section>
   );

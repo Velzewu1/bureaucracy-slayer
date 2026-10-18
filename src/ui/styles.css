@@ -437,6 +437,8 @@ main {
   color: var(--ink);
   font-size: 1.28rem;
   letter-spacing: -0.035em;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .panel-heading--compact {
@@ -458,12 +460,16 @@ main {
 }
 
 .analysis-state {
+  flex: 0 0 auto;
+  max-width: 11rem;
   padding: 7px 10px;
   border-radius: 999px;
   background: #f0f2ef;
   color: #717a76;
   font-size: 0.65rem;
   font-weight: 750;
+  line-height: 1.3;
+  text-align: center;
 }
 
 .analysis-state--complete {
@@ -488,6 +494,7 @@ main {
 }
 
 .locked-context__badge {
+  flex: 0 0 auto;
   margin-bottom: 7px;
   padding: 4px 8px;
   border-radius: 999px;
@@ -500,23 +507,24 @@ main {
 }
 
 .goal-context {
-  min-height: 94px;
   margin: 0;
-  padding: 15px 17px;
-  border: 1px solid #ccd4cb;
-  border-radius: 12px;
-  background: #f3f5f2;
+  padding: 2px 0 4px 14px;
+  border: 0;
+  border-left: 3px solid #c5d0c6;
+  border-radius: 0;
+  background: transparent;
   color: var(--ink);
-  font-size: 1rem;
+  font-size: 1.05rem;
   font-weight: 560;
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 .portal-field {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  flex-wrap: wrap;
+  gap: 12px 20px;
   margin: 15px 0 24px;
   padding: 13px 15px;
   border: 1px solid #e2e6e0;
@@ -623,7 +631,7 @@ main {
 
 .error-banner {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   margin-top: 14px;
   padding: 14px 18px;
@@ -632,6 +640,12 @@ main {
   background: var(--red-soft);
   color: var(--red);
   font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.error-banner strong,
+.error-banner span {
+  min-width: 0;
 }
 
 .workspace-grid {
@@ -649,6 +663,10 @@ main {
 
 .facts-panel {
   padding: 24px;
+}
+
+.facts-panel .eyebrow {
+  letter-spacing: 0.06em;
 }
 
 .personalization-view-toggle {
@@ -938,7 +956,7 @@ main {
 }
 
 .facts-panel--placeholder {
-  min-height: 340px;
+  min-height: 0;
 }
 
 .facts-panel--unavailable {
@@ -947,12 +965,17 @@ main {
 
 .revision-label,
 .count-badge {
+  flex: 0 0 auto;
+  max-width: 9rem;
   padding: 5px 8px;
   border-radius: 6px;
   background: #eef1ed;
   color: #68716e;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 0.59rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  text-align: center;
 }
 
 .panel-intro {
@@ -969,54 +992,40 @@ main {
   margin-bottom: 20px;
 }
 
-.personalization-placeholder {
+.situation-empty {
   display: grid;
-  gap: 12px;
-  margin: 24px 0;
+  gap: 8px;
+  padding: 4px 0 8px;
 }
 
-.personalization-placeholder span {
-  display: block;
-  height: 42px;
-  border: 1px solid #e1e6df;
-  border-radius: 9px;
-  background: linear-gradient(90deg, #f6f8f4, #eef2ec);
+.situation-empty p {
+  margin: 0;
+  color: #4d5854;
+  font-size: 0.86rem;
+  line-height: 1.5;
 }
 
-.personalization-placeholder span:nth-child(2) {
-  width: 88%;
-}
-
-.personalization-placeholder span:nth-child(3) {
-  width: 72%;
-}
-
-.facts-panel--identifying .personalization-placeholder span {
-  background: linear-gradient(90deg, #f3f7f1, #e8f5ef, #f3f7f1);
-  background-size: 200% 100%;
-  animation: placeholder-shift 1.6s ease-in-out infinite;
-}
-
-@keyframes placeholder-shift {
-  from {
-    background-position: 100% 0;
-  }
-  to {
-    background-position: -100% 0;
-  }
-}
-
-.personalization-safety-note {
-  display: flex;
-  gap: 7px;
-  color: #75807c;
-  font-size: 0.62rem;
-  line-height: 1.45;
-}
-
-.personalization-safety-note span {
+.situation-empty__next {
   color: var(--green);
-  font-weight: 900;
+  font-size: 0.74rem;
+  font-weight: 750;
+}
+
+.technical-details {
+  margin-top: 8px;
+  color: #6d7874;
+  font-size: 0.64rem;
+}
+
+.technical-details summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.technical-details code,
+.technical-details p {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .fact-field label {
@@ -1282,10 +1291,13 @@ main {
 .evidence-result,
 .change-badge {
   flex: 0 0 auto;
+  max-width: 12rem;
   padding: 7px 10px;
   border-radius: 999px;
   font-size: 0.64rem;
   font-weight: 800;
+  line-height: 1.3;
+  text-align: center;
 }
 
 .status-badge--positive {
@@ -2323,8 +2335,20 @@ main {
   color: #34413b;
 }
 
+.app-footer span,
+.app-footer code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .app-footer span {
   flex: 1;
+}
+
+@media (max-width: 1320px) {
+  .mode-pill {
+    display: none;
+  }
 }
 
 @media (max-width: 1060px) {

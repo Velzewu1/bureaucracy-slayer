@@ -155,7 +155,10 @@ export function GuidedPersonalization({
                 : "Next unresolved fact (canonical order)"}
           </span>
           <h3>{question.definition.label}</h3>
-          <code>{question.definition.key}</code>
+          <details className="technical-details">
+            <summary>Fact identifier</summary>
+            <code>{question.definition.key}</code>
+          </details>
           <QuestionControl
             key={question.definition.key}
             definition={question.definition}

@@ -473,9 +473,15 @@ export function App({
               <strong>{workspace.analysis?.source.label ?? configured.label}</strong>
               <p>
                 {workspace.analysis === null
-                  ? configured.detail
-                  : `Snapshot ${workspace.analysis.snapshot.id}. Further answers use only the deterministic evaluator and planner.`}
+                  ? "Questions appear in this column after the website is analyzed."
+                  : "Further answers use only the deterministic evaluator and planner."}
               </p>
+              {workspace.analysis === null ? null : (
+                <details className="technical-details">
+                  <summary>Snapshot identifier</summary>
+                  <code>{workspace.analysis.snapshot.id}</code>
+                </details>
+              )}
             </div>
           </aside>
 
@@ -506,7 +512,7 @@ export function App({
                 <p className="eyebrow">Ready when you are</p>
                 <h2>Turn captured policies into a verified action route</h2>
                 <p>
-                  Use Analyze Website above to inspect safe steps, source citations, and excluded actions.
+                  Analyze the website, then answer the questions that the verified rules actually use.
                 </p>
               </section>
             ) : (

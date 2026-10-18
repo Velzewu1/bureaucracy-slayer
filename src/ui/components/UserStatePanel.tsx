@@ -66,8 +66,11 @@ export function UserStatePanel({
             <div className={`fact-field ${isMissing ? "fact-field--missing" : ""}`} key={definition.key}>
               <label htmlFor={`fact-${definition.key}`}>
                 <span>{definition.label}</span>
-                <code>{definition.key}</code>
               </label>
+              <details className="technical-details">
+                <summary>Fact identifier</summary>
+                <code>{definition.key}</code>
+              </details>
               {options === undefined ? (
                 <input
                   id={`fact-${definition.key}`}

@@ -64,15 +64,19 @@ describe("Live personalization UX", () => {
     expect(markup).not.toContain("<textarea");
   });
 
-  it("keeps a disabled personalization section in the Live idle state", () => {
+  it("shows an empty situation state before analysis, with no fake controls", () => {
     const markup = renderToStaticMarkup(
       createElement(App, { initialMode: "live_sonnet" }),
     );
 
-    expect(markup).toContain("Personalize the decision");
-    expect(markup).toContain("Questions pending verification");
-    expect(markup).toContain('aria-disabled="true"');
+    expect(markup).toContain("Your situation");
+    expect(markup).toContain("relevant questions once the website");
+    expect(markup).toContain("Start by analyzing the website.");
+    expect(markup).not.toContain('class="personalization-placeholder"');
+    expect(markup).not.toContain("<select");
+    expect(markup).not.toContain("<textarea");
     expect(markup).not.toContain("payment.status");
+    expect(markup.match(/>Analyze Website<\/button>/gu)?.length).toBe(1);
   });
 
   it("shows a stable identifying state while Live extraction is loading", () => {
@@ -83,8 +87,11 @@ describe("Live personalization UX", () => {
     expect(livePersonalizationState("analyzing", null, false)).toBe(
       "identifying",
     );
-    expect(markup).toContain("Identifying which facts matter for your situation");
-    expect(markup).toContain('aria-disabled="true"');
+    expect(markup).toContain("Relevant questions will appear here when verification finishes.");
+    expect(markup).toContain("This step does not ask for facts yet.");
+    expect(markup).not.toContain('class="personalization-placeholder"');
+    expect(markup).not.toContain("<select");
+    expect(markup).not.toContain("<input");
   });
 
   it("renders canonical fact controls only after verified analysis", async () => {
@@ -145,7 +152,10 @@ describe("Live personalization UX", () => {
     const markup = renderToStaticMarkup(
       createElement(PersonalizationPlaceholder, { state: "unavailable" }),
     );
-    expect(markup).toContain("No facts or guidance from an earlier Live result");
+    expect(markup).toContain("This run did not produce verified questions");
+    expect(markup).toContain("Use the header action to try again.");
+    expect(markup).not.toContain("<select");
+    expect(markup).not.toContain("payment.status");
   });
 
   it("keeps recovery waiting without exposing facts after a refresh", () => {
@@ -157,8 +167,9 @@ describe("Live personalization UX", () => {
     );
 
     expect(markup).toContain("Resume analysis");
-    expect(markup).toContain("Questions pending verification");
+    expect(markup).toContain("Start by analyzing the website.");
     expect(markup).not.toContain("payment.status");
+    expect(markup).not.toContain("<select");
   });
 
   it("locks personalization before verification for every retained provider seam", () => {
@@ -170,7 +181,7 @@ describe("Live personalization UX", () => {
     );
 
     for (const markup of [fixtureMarkup, recordedMarkup]) {
-      expect(markup).toContain("Questions pending verification");
+      expect(markup).toContain("Start by analyzing the website.");
       expect(markup).not.toContain("Replan with updated facts");
     }
     const firstRecordedFact =

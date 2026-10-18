@@ -32,10 +32,13 @@ export function SafeRoutePanel({ analysis }: SafeRoutePanelProps) {
         </div>
         <div>
           <strong>{status.summary}</strong>
-          <p>
-            Plan <code>{analysis.plan.id}</code> · User state revision{" "}
-            {analysis.plan.userStateRevision}
-          </p>
+          <details className="technical-details">
+            <summary>Plan reference</summary>
+            <p>
+              Plan <code>{analysis.plan.id}</code> · User state revision{" "}
+              {analysis.plan.userStateRevision}
+            </p>
+          </details>
         </div>
       </div>
 
@@ -131,7 +134,7 @@ export function SafeRoutePanel({ analysis }: SafeRoutePanelProps) {
 
       <div className="guidance-warning">
         <strong>Guidance only.</strong> Nothing here can submit, cancel, recover, or otherwise execute a
-        financial action. Every step has <code>autoExecutable: false</code>.
+        financial action.
       </div>
     </section>
   );
