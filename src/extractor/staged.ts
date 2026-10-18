@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   IdSchema,
   JsonScalarSchema,
+  hashCanonical,
   normalizeEvidenceText,
   type JsonScalar,
   type ProcedureModel,
@@ -92,7 +93,16 @@ export type RuleIdNormalization = Readonly<{
   canonicalRuleId: string;
 }>;
 
-export type StagedConversionNormalization = CompactConversionNormalization | RuleIdNormalization;
+export type ProcedureModelIdNormalization = Readonly<{
+  code: "CANONICAL_PROCEDURE_MODEL_ID_ASSIGNED";
+  originalProcedureModelId: string;
+  canonicalProcedureModelId: string;
+}>;
+
+export type StagedConversionNormalization =
+  | CompactConversionNormalization
+  | RuleIdNormalization
+  | ProcedureModelIdNormalization;
 
 export type RuleIdNormalizationOutcome =
   | Readonly<{
@@ -562,6 +572,40 @@ export function normalizeStagedRuleIds(
   };
 }
 
+const NUMERIC_PREFIX_TECHNICAL_ID = /^[a-z][a-z0-9]*_[a-zA-Z0-9_-]{6,}$/u;
+
+function normalizeProcedureModelId(
+  policy: PolicyExtractionDTO,
+  mapping: ProcedureMappingDTO,
+): Readonly<{
+  mapping: ProcedureMappingDTO;
+  normalizations: readonly ProcedureModelIdNormalization[];
+}> {
+  if (IdSchema.safeParse(mapping.id).success || !NUMERIC_PREFIX_TECHNICAL_ID.test(mapping.id)) {
+    return { mapping, normalizations: [] };
+  }
+
+  // The model id is technical identity assigned before any EvidenceResult,
+  // evaluation, or plan exists. Bind its deterministic replacement to both
+  // staged identities and the independently validated source snapshot.
+  const digest = hashCanonical({
+    schemaVersion: 1,
+    sourceSnapshotId: mapping.sourceSnapshotId,
+    sourceSnapshotHash: mapping.sourceSnapshotHash,
+    policyAnalysisId: policy.policyAnalysisId,
+    generatedProcedureModelId: mapping.id,
+  });
+  const canonicalProcedureModelId = `procedure_${digest}`;
+  return {
+    mapping: { ...mapping, id: canonicalProcedureModelId },
+    normalizations: [{
+      code: "CANONICAL_PROCEDURE_MODEL_ID_ASSIGNED",
+      originalProcedureModelId: mapping.id,
+      canonicalProcedureModelId,
+    }],
+  };
+}
+
 export function convertStagedExtraction(
   policyInput: unknown,
   mappingInput: unknown,
@@ -581,7 +625,8 @@ export function convertStagedExtraction(
     return { ok: false, stage: "conversion", issues: normalized.issues, normalizations: [] };
   }
   const policy = normalized.policy;
-  const mapping = normalized.mapping;
+  const modelIdentity = normalizeProcedureModelId(policy, normalized.mapping);
+  const mapping = modelIdentity.mapping;
   const mappings = new Map(mapping.ruleMappings.map((entry) => [entry.policyRuleId, entry]));
   const compactDto: CompactExtractionDTO = {
     schemaVersion: 1,
@@ -618,14 +663,22 @@ export function convertStagedExtraction(
       stage: converted.stage,
       issues: converted.issues,
       compactDto,
-      normalizations: [...normalized.normalizations, ...converted.normalizations],
+      normalizations: [
+        ...normalized.normalizations,
+        ...modelIdentity.normalizations,
+        ...converted.normalizations,
+      ],
     };
   }
   return {
     ok: true,
     model: converted.model,
     compactDto,
-    normalizations: [...normalized.normalizations, ...converted.normalizations],
+    normalizations: [
+      ...normalized.normalizations,
+      ...modelIdentity.normalizations,
+      ...converted.normalizations,
+    ],
   };
 }
 

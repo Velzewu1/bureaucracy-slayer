@@ -64,6 +64,74 @@ function qualifiedCancellationScenario() {
 }
 
 describe("two-stage deterministic conversion", () => {
+  it("assigns deterministic canonical identity to a numeric-prefix technical model id", () => {
+    const fixture = stages();
+    fixture.mapping.id = "stage2_unauthorized_transfer_report";
+
+    const first = convertStagedExtraction(fixture.policy, fixture.mapping, snapshot, catalog);
+    const second = replayStagedExtraction(fixture.policy, fixture.mapping, snapshot, catalog);
+
+    expect(first).toEqual(second);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(first.model.id).toMatch(/^procedure_[a-f0-9]{64}$/u);
+    expect(first.compactDto.id).toBe(first.model.id);
+    expect(first.normalizations).toContainEqual({
+      code: "CANONICAL_PROCEDURE_MODEL_ID_ASSIGNED",
+      originalProcedureModelId: "stage2_unauthorized_transfer_report",
+      canonicalProcedureModelId: first.model.id,
+    });
+    expect(fixture.mapping.id).toBe("stage2_unauthorized_transfer_report");
+  });
+
+  it("preserves an existing valid procedure model id", () => {
+    const fixture = stages();
+    const originalId = fixture.mapping.id;
+
+    const converted = convertStagedExtraction(fixture.policy, fixture.mapping, snapshot, catalog);
+
+    expect(converted.ok).toBe(true);
+    if (!converted.ok) return;
+    expect(converted.model.id).toBe(originalId);
+    expect(converted.normalizations.some(
+      (normalization) => normalization.code === "CANONICAL_PROCEDURE_MODEL_ID_ASSIGNED",
+    )).toBe(false);
+  });
+
+  it("does not broadly sanitize unrelated malformed model ids", () => {
+    const fixture = stages();
+    fixture.mapping.id = "Bad model id!";
+
+    const converted = convertStagedExtraction(fixture.policy, fixture.mapping, snapshot, catalog);
+
+    expect(converted.ok).toBe(false);
+    if (converted.ok) return;
+    expect(converted.stage).toBe("canonical_schema");
+    expect(converted.normalizations.some(
+      (normalization) => normalization.code === "CANONICAL_PROCEDURE_MODEL_ID_ASSIGNED",
+    )).toBe(false);
+  });
+
+  it("does not relax canonical action or rule identifiers", () => {
+    const fixture = stages();
+    const converted = convertStagedExtraction(
+      fixture.policy,
+      fixture.mapping,
+      snapshot,
+      catalog,
+    );
+    expect(converted.ok).toBe(true);
+    if (!converted.ok) return;
+
+    const invalidAction = structuredClone(converted.model);
+    invalidAction.actions[0]!.id = "stage2_invalid_action";
+    expect(ProcedureModelSchema.safeParse(invalidAction).success).toBe(false);
+
+    const invalidRule = structuredClone(converted.model);
+    invalidRule.rules[0]!.id = "stage2_invalid_rule";
+    expect(ProcedureModelSchema.safeParse(invalidRule).success).toBe(false);
+  });
+
   it("deterministically normalizes unique internal rule IDs and preserves policy semantics", () => {
     const fixture = stages();
     const originalRule = fixture.policy.rules[0]!;
