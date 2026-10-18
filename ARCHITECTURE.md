@@ -468,6 +468,14 @@ export const UserState = z.object({
 });
 ```
 
+`EvidenceCitation.actionIds` are optional page-local source provenance. Each ID
+must name an observed `WebsiteAction` on the cited page, but it does not become a
+route step merely by appearing in a citation. `ProcedureAction.websiteActionId`
+is the separate operational binding used by evaluation and planning. A contextual
+policy/help link may therefore remain citation-only; extraction must not fabricate
+a `ProcedureAction` solely to make that informational link part of the procedure
+graph.
+
 `user_task` is permitted only for a policy-supported human step such as contacting support. It must still be backed by a valid rule/citation to enter a ready plan. It has no browser action and can never be auto-executed.
 
 ```ts

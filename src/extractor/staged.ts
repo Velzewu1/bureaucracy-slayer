@@ -418,6 +418,22 @@ export function validateProcedureMapping(
     issues.add("Stage 2 sourceSnapshotId and sourceSnapshotHash must match the focused catalog.");
   }
 
+  // Stage 2 treats citation actions as immutable source provenance, not as an
+  // instruction to manufacture ProcedureActions. Recheck their exact catalog
+  // identity here so a caller cannot bypass the Stage 1 boundary before join.
+  for (const rule of policy.rules) {
+    for (const citation of rule.citations) {
+      for (const websiteActionId of citation.websiteActionIds) {
+        const action = references.actions.get(websiteActionId);
+        if (action === undefined || action.pageId !== citation.pageId) {
+          issues.add(
+            `Stage 2 policy rule ${rule.id} citation WebsiteAction ${websiteActionId} is not on cited page ${citation.pageId}.`,
+          );
+        }
+      }
+    }
+  }
+
   for (const action of dto.actions) {
     if (actions.has(action.id)) issues.add(`Duplicate Stage 2 procedure action: ${action.id}.`);
     actions.set(action.id, action);

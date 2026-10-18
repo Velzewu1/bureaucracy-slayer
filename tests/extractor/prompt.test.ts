@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { POLICY_EXTRACTION_SYSTEM_PROMPT } from "../../src/extractor/index.js";
+import {
+  POLICY_EXTRACTION_SYSTEM_PROMPT,
+  PROCEDURE_MAPPING_SYSTEM_PROMPT,
+} from "../../src/extractor/index.js";
 
 describe("Stage 1 policy extraction prompt", () => {
   it("distinguishes action eligibility from eventual outcomes", () => {
@@ -69,6 +72,18 @@ describe("Stage 1 policy extraction prompt", () => {
     );
     expect(POLICY_EXTRACTION_SYSTEM_PROMPT).toContain(
       "Keep review when the evidence needed to determine action eligibility is absent",
+    );
+  });
+
+  it("keeps citation-only provenance separate from procedure actions", () => {
+    expect(POLICY_EXTRACTION_SYSTEM_PROMPT).toContain(
+      "a citation-only informational link may remain provenance without becoming a ProcedureAction",
+    );
+    expect(PROCEDURE_MAPPING_SYSTEM_PROMPT).toContain(
+      "do not by themselves require matching ProcedureActions",
+    );
+    expect(PROCEDURE_MAPPING_SYSTEM_PROMPT).toContain(
+      "Never add a dummy or unrelated ProcedureAction solely to represent an informational action",
     );
   });
 });
