@@ -237,6 +237,132 @@ function collectorFailure(error: unknown): LiveExtractionPipelineError {
   }
 }
 
+function diagnosticField(issues: readonly string[], label: string): string | undefined {
+  const prefix = `${label}: `;
+  const line = issues.find((issue) => issue.startsWith(prefix));
+  return line === undefined ? undefined : line.slice(prefix.length);
+}
+
+/**
+ * Turns sanitized transport diagnostics into a stable category. Raw provider
+ * text is never copied into the client-facing message.
+ */
+function presentTransportFailure(outcome: ExtractionFailure): LiveExtractionFailure {
+  const mapping = outcome.modelStage === "procedure_mapping";
+  const label = mapping ? "Procedure mapping" : "Policy extraction";
+  const code = mapping ? "STAGE_2_TRANSPORT_FAILED" : "STAGE_1_TRANSPORT_FAILED";
+  const stage = mapping ? "procedure_mapping" : "policy_extraction";
+  const errorClass = diagnosticField(outcome.issues, "Error class");
+  const httpStatus = diagnosticField(outcome.issues, "HTTP status");
+  const providerCode = diagnosticField(outcome.issues, "Anthropic error code");
+  const detail = (diagnosticField(outcome.issues, "Message") ?? "").toLowerCase();
+
+  if (detail.includes("deadline elapsed")) {
+    return {
+      code: "JOB_TIMED_OUT",
+      stage: "timeout",
+      message: "The extraction deadline elapsed before the model request could start.",
+      retryable: false,
+      issueCodes: ["JOB_DEADLINE_ELAPSED"],
+    };
+  }
+  if (errorClass === "APIConnectionTimeoutError") {
+    return {
+      code,
+      stage,
+      message: `${label} timed out before the model provider responded.`,
+      retryable: false,
+      issueCodes: [outcome.code, "UPSTREAM_TIMEOUT"],
+    };
+  }
+  if (
+    providerCode === "UNABLE_TO_VERIFY_LEAF_SIGNATURE" ||
+    providerCode === "CERT_SIGNATURE_FAILURE" ||
+    detail.includes("unable to verify the first certificate") ||
+    detail.includes("certificate")
+  ) {
+    return {
+      code,
+      stage,
+      message: `${label} could not verify the model provider certificate. The request was not retried.`,
+      retryable: false,
+      issueCodes: [outcome.code, "UPSTREAM_TLS_FAILED"],
+    };
+  }
+  if (errorClass === "APIConnectionError") {
+    return {
+      code,
+      stage,
+      message: `${label} could not connect to the model provider.`,
+      retryable: false,
+      issueCodes: [outcome.code, "UPSTREAM_CONNECTION_FAILED"],
+    };
+  }
+  if (httpStatus !== undefined) {
+    return {
+      code,
+      stage,
+      message: `${label} was rejected by the model provider.`,
+      retryable: false,
+      issueCodes: [outcome.code, "UPSTREAM_REJECTED"],
+    };
+  }
+  if (detail.includes("timed out") || detail.includes("timeout")) {
+    return {
+      code,
+      stage,
+      message: `${label} timed out before the model provider responded.`,
+      retryable: false,
+      issueCodes: [outcome.code, "UPSTREAM_TIMEOUT"],
+    };
+  }
+  return {
+    code,
+    stage,
+    message: `${label} transport failed.`,
+    retryable: false,
+    issueCodes: [outcome.code],
+  };
+}
+
+function presentSchemaFailure(outcome: ExtractionFailure): LiveExtractionFailure {
+  const identifierInvalid =
+    outcome.issues.length > 0 &&
+    outcome.issues.every((issue) =>
+      /(?:^|\.)id: Invalid string: must match pattern /u.test(issue),
+    );
+  if (identifierInvalid) {
+    return {
+      code: "PROCEDURE_SCHEMA_INVALID",
+      stage: "procedure_schema",
+      message:
+        "The canonical procedure model was invalid because generated identifiers did not match the required form.",
+      retryable: false,
+      issueCodes: ["PROCEDURE_SCHEMA_INVALID", "CANONICAL_IDENTIFIER_INVALID"],
+    };
+  }
+  const snapshotMismatch = outcome.issues.some(
+    (issue) => issue.includes("sourceSnapshotId") || issue.includes("sourceSnapshotHash"),
+  );
+  if (snapshotMismatch) {
+    return {
+      code: "PROCEDURE_SCHEMA_INVALID",
+      stage: "procedure_schema",
+      message:
+        "The canonical procedure model was invalid because it did not match the collected snapshot.",
+      retryable: false,
+      issueCodes: ["PROCEDURE_SCHEMA_INVALID", "SNAPSHOT_IDENTITY_MISMATCH"],
+    };
+  }
+  return {
+    code: "PROCEDURE_SCHEMA_INVALID",
+    stage: "procedure_schema",
+    message: "The canonical procedure model was invalid.",
+    retryable: false,
+    issueCodes: ["PROCEDURE_SCHEMA_INVALID"],
+  };
+}
+
 function extractionFailure(outcome: ExtractionFailure): LiveExtractionPipelineError {
   const issueCodes = [outcome.code];
   switch (outcome.code) {
@@ -256,27 +382,10 @@ function extractionFailure(outcome: ExtractionFailure): LiveExtractionPipelineEr
         retryable: false,
         issueCodes,
       });
-    case "CLAUDE_REQUEST_FAILED": {
-      const stage = outcome.modelStage;
-      return pipelineFailure({
-        code:
-          stage === "procedure_mapping"
-            ? "STAGE_2_TRANSPORT_FAILED"
-            : "STAGE_1_TRANSPORT_FAILED",
-        stage:
-          stage === "procedure_mapping"
-            ? "procedure_mapping"
-            : "policy_extraction",
-        message:
-          stage === "procedure_mapping"
-            ? "Procedure mapping transport failed."
-            : "Policy extraction transport failed.",
-        // Extraction failures do not expose structured provider retryability.
-        // Fail closed instead of inviting another paid request after a permanent error.
-        retryable: false,
-        issueCodes,
-      });
-    }
+    case "CLAUDE_REQUEST_FAILED":
+      // Diagnostics choose the category. Retryability stays closed: a failed
+      // live request must not invite another paid call.
+      return pipelineFailure(presentTransportFailure(outcome));
     case "CLAUDE_RESPONSE_INVALID": {
       const stage = outcome.modelStage;
       return pipelineFailure({
@@ -313,13 +422,7 @@ function extractionFailure(outcome: ExtractionFailure): LiveExtractionPipelineEr
         issueCodes,
       });
     case "PROCEDURE_SCHEMA_INVALID":
-      return pipelineFailure({
-        code: "PROCEDURE_SCHEMA_INVALID",
-        stage: "procedure_schema",
-        message: "The canonical procedure model was invalid.",
-        retryable: false,
-        issueCodes,
-      });
+      return pipelineFailure(presentSchemaFailure(outcome));
     case "EVIDENCE_VALIDATION_FAILED":
       return pipelineFailure({
         code: "EVIDENCE_VALIDATION_FAILED",

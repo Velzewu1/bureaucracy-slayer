@@ -157,6 +157,36 @@ describe("two-stage deterministic conversion", () => {
     expect(outcome.issues[0]).toContain("normalization collision");
   });
 
+  it("normalizes the rule ids recorded from the invalid Sonnet procedure model", () => {
+    const recordedIds = [
+      "r1_prohibit_cancel_completed",
+      "r2_prohibit_cancel_processing_started",
+      "r3_permit_cancel_scheduled",
+      "r4_permit_recovery_completed_self_initiated",
+      "r5_prohibit_recovery_not_initiated",
+      "r6_require_recovery_reference_and_recipient",
+      "r7_require_recovery_description_and_email",
+      "r8_require_instant_completed_before_recovery",
+    ] as const;
+
+    for (const recordedId of recordedIds) {
+      const fixture = stages();
+      const originalRule = fixture.policy.rules[0]!;
+      const mapping = fixture.mapping.ruleMappings.find(
+        (candidate) => candidate.policyRuleId === originalRule.id,
+      );
+      if (mapping === undefined) throw new TypeError("Missing rule mapping fixture");
+      originalRule.id = recordedId;
+      mapping.policyRuleId = recordedId;
+
+      const outcome = convertStagedExtraction(fixture.policy, fixture.mapping, snapshot, catalog);
+      expect(outcome.ok, recordedId).toBe(true);
+      if (!outcome.ok) continue;
+      expect(outcome.compactDto.rules[0]?.id).toBe(`rule_${recordedId}`);
+      expect(ProcedureModelSchema.safeParse(outcome.model).success).toBe(true);
+    }
+  });
+
   it("rejects unknown Stage 2 rule references during normalization", () => {
     const fixture = stages();
     fixture.mapping.ruleMappings[0]!.policyRuleId = "r9_unknown_rule";

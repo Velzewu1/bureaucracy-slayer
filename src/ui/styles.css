@@ -883,7 +883,12 @@ main {
   font-weight: 750;
 }
 
-.guided-answers > div {
+/* Author display must not override the closed-<details> hidden state. */
+.guided-answers:not([open]) > div {
+  display: none;
+}
+
+.guided-answers[open] > div {
   display: grid;
   gap: 6px;
   margin-top: 10px;

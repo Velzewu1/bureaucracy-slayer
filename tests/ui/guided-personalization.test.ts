@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -229,5 +230,31 @@ describe("guided personalization", () => {
     });
     expect(answered.plan.status).toBe("review_required");
     expect(guidedDecisionPresentation(answered).label).toBe("Requires review");
+  });
+
+  it("keeps closed earlier-answer controls out of the layout so they cannot intercept clicks", async () => {
+    const analysis = await analyzeUnknown();
+    const answered = UserStateSchema.parse({
+      schemaVersion: 1,
+      revision: analysis.userState.revision,
+      facts: { ...analysis.userState.facts, "payment.method": "standard" },
+    });
+    const markup = renderToStaticMarkup(
+      createElement(GuidedPersonalization, {
+        analysis,
+        userState: answered,
+        isBusy: false,
+        onAnswer: () => {},
+      }),
+    );
+    expect(markup).toContain('class="guided-answers"');
+    expect(markup).not.toContain('class="guided-answers" open');
+
+    const stylesheet = readFileSync(new URL("../../src/ui/styles.css", import.meta.url), "utf8").replace(
+      /\r\n/gu,
+      "\n",
+    );
+    expect(stylesheet).toContain(".guided-answers:not([open]) > div {\n  display: none;\n}");
+    expect(stylesheet).not.toMatch(/\.guided-answers > div \{\s*display:\s*grid/u);
   });
 });

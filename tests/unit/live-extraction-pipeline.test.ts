@@ -312,6 +312,119 @@ describe("live extraction composition", () => {
   );
 
   it.each([
+    [
+      ["Error class: APIConnectionTimeoutError", "Message: Request timed out."],
+      "STAGE_1_TRANSPORT_FAILED",
+      "policy_extraction",
+      "Policy extraction timed out before the model provider responded.",
+      ["CLAUDE_REQUEST_FAILED", "UPSTREAM_TIMEOUT"],
+    ],
+    [
+      [
+        "Error class: APIConnectionError",
+        "Anthropic error code: UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+        "Message: unable to verify the first certificate",
+      ],
+      "STAGE_1_TRANSPORT_FAILED",
+      "policy_extraction",
+      "Policy extraction could not verify the model provider certificate. The request was not retried.",
+      ["CLAUDE_REQUEST_FAILED", "UPSTREAM_TLS_FAILED"],
+    ],
+    [
+      ["Error class: APIConnectionError", "Message: connect ECONNREFUSED"],
+      "STAGE_2_TRANSPORT_FAILED",
+      "procedure_mapping",
+      "Procedure mapping could not connect to the model provider.",
+      ["CLAUDE_REQUEST_FAILED", "UPSTREAM_CONNECTION_FAILED"],
+    ],
+    [
+      ["Error class: BadRequestError", "HTTP status: 400", "Message: raw provider request req_secret"],
+      "STAGE_1_TRANSPORT_FAILED",
+      "policy_extraction",
+      "Policy extraction was rejected by the model provider.",
+      ["CLAUDE_REQUEST_FAILED", "UPSTREAM_REJECTED"],
+    ],
+    [
+      ["Message: The live extraction deadline elapsed before the Claude request could start."],
+      "JOB_TIMED_OUT",
+      "timeout",
+      "The extraction deadline elapsed before the model request could start.",
+      ["JOB_DEADLINE_ELAPSED"],
+    ],
+  ] as const)(
+    "classifies transport diagnostics without copying provider text (%s)",
+    async (issues, code, stage, message, issueCodes) => {
+      const fixture = liveExtractionArtifact();
+      const failure: ExtractionFailure = {
+        ok: false,
+        code: "CLAUDE_REQUEST_FAILED",
+        stage: "transport",
+        modelStage: code === "STAGE_2_TRANSPORT_FAILED" ? "procedure_mapping" : "policy_extraction",
+        message: "raw",
+        issues,
+        attempts: 1,
+      };
+      const runner = createLiveExtractionRunner({
+        environment: ENVIRONMENT,
+        allowedPortalUrl: LIVE_EXTRACTION_TEST_PORTAL_URL,
+        collect: () => Promise.resolve(fixture.sourceSnapshot),
+        createTransport: () => Promise.resolve(transport),
+        extract: () => Promise.resolve(failure),
+      });
+      let caught: unknown;
+      try {
+        await runner({ deadlineAtMs: Date.now() + 180_000, setPhase: () => undefined });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(LiveExtractionPipelineError);
+      if (!(caught instanceof LiveExtractionPipelineError)) return;
+      expect(caught.failure).toMatchObject({ code, stage, message, retryable: false, issueCodes });
+      expect(JSON.stringify(caught.failure)).not.toContain("req_secret");
+      expect(JSON.stringify(caught.failure)).not.toContain("ECONNREFUSED");
+      expect(JSON.stringify(caught.failure)).not.toContain("UNABLE_TO_VERIFY");
+    },
+  );
+
+  it("names an identifier-pattern canonical rejection without echoing the invalid value", async () => {
+    const fixture = liveExtractionArtifact();
+    const failure: ExtractionFailure = {
+      ok: false,
+      code: "PROCEDURE_SCHEMA_INVALID",
+      stage: "procedure_schema",
+      message: "raw",
+      issues: [
+        "rules.0.id: Invalid string: must match pattern /^[a-z]+_[a-zA-Z0-9_-]{6,}$/",
+        "rules.1.id: Invalid string: must match pattern /^[a-z]+_[a-zA-Z0-9_-]{6,}$/",
+      ],
+      attempts: 1,
+    };
+    const runner = createLiveExtractionRunner({
+      environment: ENVIRONMENT,
+      allowedPortalUrl: LIVE_EXTRACTION_TEST_PORTAL_URL,
+      collect: () => Promise.resolve(fixture.sourceSnapshot),
+      createTransport: () => Promise.resolve(transport),
+      extract: () => Promise.resolve(failure),
+    });
+    let caught: unknown;
+    try {
+      await runner({ deadlineAtMs: Date.now() + 180_000, setPhase: () => undefined });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(LiveExtractionPipelineError);
+    if (!(caught instanceof LiveExtractionPipelineError)) return;
+    expect(caught.failure).toMatchObject({
+      code: "PROCEDURE_SCHEMA_INVALID",
+      message:
+        "The canonical procedure model was invalid because generated identifiers did not match the required form.",
+      issueCodes: ["PROCEDURE_SCHEMA_INVALID", "CANONICAL_IDENTIFIER_INVALID"],
+    });
+    expect(JSON.stringify(caught.failure)).not.toContain("r1_");
+    expect(JSON.stringify(caught.failure)).not.toContain("pattern");
+  });
+
+  it.each([
     [CollectorErrorCode.browserLaunchFailed, "COLLECTOR_UNAVAILABLE"],
     [CollectorErrorCode.navigationFailed, "PORTAL_UNAVAILABLE"],
     [CollectorErrorCode.navigationTimeout, "PORTAL_UNAVAILABLE"],
