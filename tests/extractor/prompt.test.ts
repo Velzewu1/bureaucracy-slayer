@@ -86,4 +86,25 @@ describe("Stage 1 policy extraction prompt", () => {
       "Never add a dummy or unrelated ProcedureAction solely to represent an informational action",
     );
   });
+
+  it("keeps page navigation distinct from policy and procedural prerequisites", () => {
+    expect(PROCEDURE_MAPPING_SYSTEM_PROMPT).toContain(
+      "Never relabel an informational or policy-help link as navigation to an operational page",
+    );
+    expect(PROCEDURE_MAPPING_SYSTEM_PROMPT).toContain(
+      "Navigation used only to locate a governed control is access guidance",
+    );
+    expect(PROCEDURE_MAPPING_SYSTEM_PROMPT).toContain(
+      "do not represent the navigation as a separately permitted policy action or prerequisite",
+    );
+    expect(PROCEDURE_MAPPING_SYSTEM_PROMPT).toContain(
+      "Never bind a same-page informational link as though it navigates to the page already containing the target control",
+    );
+    expect(PROCEDURE_MAPPING_SYSTEM_PROMPT).toContain(
+      "A policy-mandated prior action must remain represented by the Stage 1 require_action rule",
+    );
+    expect(PROCEDURE_MAPPING_SYSTEM_PROMPT).toContain(
+      "Never invent a missing action, silently drop a genuine prerequisite",
+    );
+  });
 });
