@@ -124,13 +124,11 @@ export function GuidedPersonalization({
     <section className="panel facts-panel guided-panel" aria-labelledby="guided-heading">
       <div className="panel-heading panel-heading--compact">
         <div>
-          <span className="section-number">02</span>
           <div>
-            <p className="eyebrow">Guided personalization</p>
-            <h2 id="guided-heading">One relevant question at a time</h2>
+            <p className="eyebrow">Your situation</p>
+            <h2 id="guided-heading">One question at a time</h2>
           </div>
         </div>
-        <span className="revision-label">Revision {userState.revision}</span>
       </div>
 
       <div className={`guided-status guided-status--${decision.tone}`} aria-live="polite">
@@ -155,10 +153,6 @@ export function GuidedPersonalization({
                 : "Next unresolved fact (canonical order)"}
           </span>
           <h3>{question.definition.label}</h3>
-          <details className="technical-details">
-            <summary>Fact identifier</summary>
-            <code>{question.definition.key}</code>
-          </details>
           <QuestionControl
             key={question.definition.key}
             definition={question.definition}
@@ -180,7 +174,6 @@ export function GuidedPersonalization({
                   <blockquote key={`${citation.ruleId}-${citation.blockId}`}>
                     &ldquo;{citation.excerpt}&rdquo;
                     <footer>
-                      <code>{citation.ruleId}</code>
                       <a href={citation.pageUrl} target="_blank" rel="noreferrer">Source</a>
                     </footer>
                   </blockquote>

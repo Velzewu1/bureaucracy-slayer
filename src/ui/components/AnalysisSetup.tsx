@@ -3,7 +3,6 @@ type AnalysisSetupProps = Readonly<{
   portalUrl: string;
   goalEditable: boolean;
   isBusy: boolean;
-  hasAnalysis: boolean;
   onGoalChange(goal: string): void;
   goalNote: string;
 }>;
@@ -13,7 +12,6 @@ export function AnalysisSetup({
   portalUrl,
   goalEditable,
   isBusy,
-  hasAnalysis,
   onGoalChange,
   goalNote,
 }: AnalysisSetupProps) {
@@ -21,15 +19,11 @@ export function AnalysisSetup({
     <section className="panel setup-panel" aria-labelledby="goal-heading">
       <div className="panel-heading">
         <div>
-          <span className="section-number">01</span>
           <div>
             <p className="eyebrow">Define the outcome</p>
             <h1 id="goal-heading">What do you need to resolve?</h1>
           </div>
         </div>
-        <span className={`analysis-state ${hasAnalysis ? "analysis-state--complete" : ""}`}>
-          {isBusy ? "Checking evidence…" : hasAnalysis ? "Analysis complete" : "Ready to analyze"}
-        </span>
       </div>
 
       <div className="locked-context__heading">

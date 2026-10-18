@@ -376,7 +376,6 @@ export function App({
     <div className="app-shell" id="top">
       <AppHeader
         portalName={workspace.analysis?.portalName ?? "Northstar Mock Bank"}
-        modeLabel={workspace.analysis?.source.label ?? configured.label}
         analyzeLabel={analyzeLabel}
         reanalyzeLabel="Analyze Website Again"
         busyLabel={activity === "replanning" ? "Replanning" : "Analyzing website"}
@@ -427,7 +426,6 @@ export function App({
           portalUrl={workspace.portalUrl}
           goalEditable={workspace.mode === "live_sonnet"}
           isBusy={isBusy || canResumeLive || canRetryAmbiguousLive}
-          hasAnalysis={workspace.analysis !== null}
           onGoalChange={(goal) => {
             if (!isBusy && !canResumeLive && !canRetryAmbiguousLive) {
               setWorkspace((current) => changeLiveGoal(current, goal));
@@ -496,21 +494,6 @@ export function App({
               </>
             )}
 
-            <div className="scenario-context" data-testid="source-context">
-              <span>Data provenance</span>
-              <strong>{workspace.analysis?.source.label ?? configured.label}</strong>
-              <p>
-                {workspace.analysis === null
-                  ? "Questions appear in this column after the website is analyzed."
-                  : "Further answers use only the deterministic evaluator and planner."}
-              </p>
-              {workspace.analysis === null ? null : (
-                <details className="technical-details">
-                  <summary>Snapshot identifier</summary>
-                  <code>{workspace.analysis.snapshot.id}</code>
-                </details>
-              )}
-            </div>
           </aside>
 
           <div className="results-column">
@@ -564,7 +547,6 @@ export function App({
         <span>
           Evidence-linked guidance is not guaranteed safety, legal advice, or authorization to act.
         </span>
-        <code>snapshot: {workspace.analysis?.snapshot.id ?? "analysis_pending"}</code>
       </footer>
     </div>
   );

@@ -2,6 +2,8 @@ import type { JsonScalar } from "../../contracts/index.js";
 import type { DemoAnalysis } from "../types.js";
 import {
   actionReadinessPresentation,
+  factLabel,
+  planStatusPresentation,
   policyRulePresentations,
   readableReason,
 } from "../viewModel.js";
@@ -38,9 +40,8 @@ export function DecisionIntelligencePanel({
     >
       <div className="panel-heading panel-heading--compact">
         <div>
-          <span className="section-number">04</span>
           <div>
-            <p className="eyebrow">Inspectable reasoning</p>
+            <p className="eyebrow">Reasoning</p>
             <h2 id="intelligence-heading">Why this decision?</h2>
           </div>
         </div>
@@ -57,15 +58,13 @@ export function DecisionIntelligencePanel({
         <div>
           <span>Selected action</span>
           <strong>{trace.actionLabel}</strong>
-          <code>{trace.actionId}</code>
         </div>
         <p>
           {trace.decision.reasonCodes.map(readableReason).join(" ")}
-          {trace.planReasonCodes.length === 0
+          {trace.planReasonCodes.length === 0 ||
+          trace.planReasonCodes.join(" ") === trace.decision.reasonCodes.join(" ")
             ? null
-            : ` Route result: ${trace.planReasonCodes
-                .map(readableReason)
-                .join(" ")}`}
+            : ` Route result: ${trace.planReasonCodes.map(readableReason).join(" ")}`}
         </p>
       </div>
 
@@ -87,8 +86,8 @@ export function DecisionIntelligencePanel({
           <div>
             {intelligence.nextQuestion.alternatives.map((alternative) => (
               <span key={String(alternative.value)}>
-                {displayValue(alternative.value)} → {alternative.planStatus} · selected{" "}
-                {alternative.actionDecision}
+                {displayValue(alternative.value)} →{" "}
+                {planStatusPresentation({ status: alternative.planStatus }).label}
               </span>
             ))}
           </div>
@@ -116,7 +115,6 @@ export function DecisionIntelligencePanel({
               <strong className={`rule-evidence-state rule-evidence-state--${rule.evidenceState}`}>
                 {rule.evidenceLabel}
               </strong>
-              <code>{rule.ruleId}</code>
             </div>
             <div className="trace-facts">
               {rule.trace.facts.length === 0 ? (
@@ -124,7 +122,7 @@ export function DecisionIntelligencePanel({
               ) : (
                 rule.trace.facts.map((fact, index) => (
                   <span key={`${rule.ruleId}-${fact.key}-${index}`}>
-                    <code>{fact.key}</code> ={" "}
+                    {factLabel(analysis.model, fact.key)} ={" "}
                     <strong>{fact.known ? displayValue(fact.actual) : "unknown"}</strong>
                     {" → "}
                     {fact.truth}
@@ -148,14 +146,11 @@ export function DecisionIntelligencePanel({
               </ul>
             )}
             <details>
-              <summary>Exact evidence ({rule.trace.citations.length})</summary>
+              <summary>View policy evidence ({rule.trace.citations.length})</summary>
               {rule.trace.citations.map((citation) => (
                 <blockquote key={`${rule.ruleId}-${citation.blockId}`}>
                   “{citation.excerpt}”
                   <footer>
-                    <code>
-                      {citation.pageId} / {citation.blockId}
-                    </code>
                     <a href={citation.pageUrl} target="_blank" rel="noreferrer">
                       Source
                     </a>
@@ -169,7 +164,7 @@ export function DecisionIntelligencePanel({
 
       {materialCounterfactuals.length === 0 ? null : (
         <details className="counterfactuals">
-          <summary>Explore bounded what-if results ({materialCounterfactuals.length})</summary>
+          <summary>What changes if…? ({materialCounterfactuals.length})</summary>
           <div className="counterfactual-list">
             {materialCounterfactuals.map((counterfactual) => (
               <article
@@ -180,15 +175,17 @@ export function DecisionIntelligencePanel({
                 <span>If {counterfactual.factLabel} were</span>
                 <strong>{displayValue(counterfactual.hypotheticalValue)}</strong>
                 <p>
-                  Decision: {counterfactual.decisionBefore} →{" "}
-                  {counterfactual.decisionAfter}. Route:{" "}
-                  {counterfactual.planStatusBefore} → {counterfactual.planStatusAfter}.
+                  {actionReadinessPresentation(counterfactual.decisionBefore).label} →{" "}
+                  {actionReadinessPresentation(counterfactual.decisionAfter).label}. Route:{" "}
+                  {planStatusPresentation({ status: counterfactual.planStatusBefore }).label}{" "}
+                  → {planStatusPresentation({ status: counterfactual.planStatusAfter }).label}.
                 </p>
-                {counterfactual.unresolvedFacts.length === 0 ? (
-                  <small>No unresolved facts remain for the selected route.</small>
-                ) : (
+                {counterfactual.unresolvedFacts.length === 0 ? null : (
                   <small>
-                    Still unresolved: {counterfactual.unresolvedFacts.join(", ")}
+                    Still needed:{" "}
+                    {counterfactual.unresolvedFacts
+                      .map((fact) => factLabel(analysis.model, fact))
+                      .join(", ")}
                   </small>
                 )}
                 <small className="counterfactual-evidence-note">
@@ -201,10 +198,6 @@ export function DecisionIntelligencePanel({
         </details>
       )}
 
-      <p className="computation-note">
-        {intelligence.computationCount} bounded deterministic what-if evaluations; actual
-        user facts were not changed.
-      </p>
     </section>
   );
 }

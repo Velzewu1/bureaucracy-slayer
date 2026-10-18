@@ -1,5 +1,10 @@
 import type { DemoAnalysis } from "../types.js";
-import { decisionTone, excludedActions } from "../viewModel.js";
+import {
+  actionReadinessPresentation,
+  decisionTone,
+  excludedActions,
+  factLabel,
+} from "../viewModel.js";
 
 type ExcludedActionsPanelProps = Readonly<{
   analysis: DemoAnalysis;
@@ -12,13 +17,11 @@ export function ExcludedActionsPanel({ analysis }: ExcludedActionsPanelProps) {
     <section className="panel excluded-panel" aria-labelledby="excluded-heading">
       <div className="panel-heading panel-heading--compact">
         <div>
-          <span className="section-number">06</span>
           <div>
-            <p className="eyebrow">Routes not taken</p>
-            <h2 id="excluded-heading">Blocked &amp; review-required actions</h2>
+            <p className="eyebrow">Other actions</p>
+            <h2 id="excluded-heading">Not available from this decision</h2>
           </div>
         </div>
-        <span className="count-badge">{actions.length}</span>
       </div>
 
       {actions.length === 0 ? (
@@ -34,38 +37,23 @@ export function ExcludedActionsPanel({ analysis }: ExcludedActionsPanelProps) {
             >
               <div className="excluded-action__header">
                 <div>
-                  <span className="decision-status">{action.status}</span>
+                  <span className="decision-status">
+                    {actionReadinessPresentation(action.status).label}
+                  </span>
                   <h3>{action.label}</h3>
                 </div>
-                <details className="technical-details">
-                  <summary>Action identifier</summary>
-                  <code>{action.id}</code>
-                </details>
               </div>
               <ul>
-                {action.reasons.map((reason, index) => (
-                  <li key={`${action.id}-${action.reasonCodes[index] ?? String(index)}`}>
-                    {reason}
-                    {action.reasonCodes[index] === undefined ? null : (
-                      <code>{action.reasonCodes[index]}</code>
-                    )}
-                  </li>
+                {action.reasons.map((reason) => (
+                  <li key={`${action.id}-${reason}`}>{reason}</li>
                 ))}
               </ul>
               {action.missingFacts.length > 0 ? (
                 <p>
-                  Missing:{" "}
-                  {action.missingFacts.map((fact) => (
-                    <code key={fact}>{fact}</code>
-                  ))}
-                </p>
-              ) : null}
-              {action.citationRuleIds.length > 0 ? (
-                <p>
-                  Decision evidence:{" "}
-                  {action.citationRuleIds.map((ruleId) => (
-                    <code key={ruleId}>{ruleId}</code>
-                  ))}
+                  Still needed:{" "}
+                  {action.missingFacts
+                    .map((fact) => factLabel(analysis.model, fact))
+                    .join(", ")}
                 </p>
               ) : null}
             </article>
@@ -73,16 +61,6 @@ export function ExcludedActionsPanel({ analysis }: ExcludedActionsPanelProps) {
         </div>
       )}
 
-      {analysis.plan.warnings.length > 0 ? (
-        <div className="planner-warnings">
-          <strong>Planner route diagnostics</strong>
-          <ul>
-            {analysis.plan.warnings.map((warning) => (
-              <li key={warning}>{warning}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
     </section>
   );
 }

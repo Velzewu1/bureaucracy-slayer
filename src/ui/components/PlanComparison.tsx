@@ -19,10 +19,9 @@ export function PlanComparison({ original, current }: PlanComparisonProps) {
     <section className="panel comparison-panel" aria-labelledby="comparison-heading">
       <div className="panel-heading panel-heading--compact">
         <div>
-          <span className="section-number">05</span>
           <div>
-            <p className="eyebrow">Replanning audit</p>
-            <h2 id="comparison-heading">Original vs updated route</h2>
+            <p className="eyebrow">After your answer</p>
+            <h2 id="comparison-heading">What changed</h2>
           </div>
         </div>
         <span className={`change-badge ${difference.changed ? "change-badge--changed" : ""}`}>
@@ -34,8 +33,6 @@ export function PlanComparison({ original, current }: PlanComparisonProps) {
         <article>
           <span>Original</span>
           <strong>{difference.originalStatus}</strong>
-          <code>{original.plan.id}</code>
-          <small>Revision {original.plan.userStateRevision}</small>
         </article>
         <div className="comparison-arrow" aria-hidden="true">
           →
@@ -43,8 +40,6 @@ export function PlanComparison({ original, current }: PlanComparisonProps) {
         <article>
           <span>Updated</span>
           <strong>{difference.currentStatus}</strong>
-          <code>{current.plan.id}</code>
-          <small>Revision {current.plan.userStateRevision}</small>
         </article>
       </div>
 

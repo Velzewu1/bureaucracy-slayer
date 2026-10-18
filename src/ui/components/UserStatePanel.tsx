@@ -41,18 +41,12 @@ export function UserStatePanel({
     <section className="panel facts-panel" aria-labelledby="facts-heading">
       <div className="panel-heading panel-heading--compact">
         <div>
-          <span className="section-number">02</span>
           <div>
-            <p className="eyebrow">Personalize the decision</p>
+            <p className="eyebrow">Your situation</p>
             <h2 id="facts-heading">Your facts</h2>
           </div>
         </div>
-        <span className="revision-label">Revision {userState.revision}</span>
       </div>
-
-      <p className="panel-intro">
-        Only facts declared by the extracted procedure model appear here. Unanswered means unknown.
-      </p>
 
       <div className="fact-list">
         {model.factDefinitions.map((definition) => {
@@ -66,11 +60,8 @@ export function UserStatePanel({
             <div className={`fact-field ${isMissing ? "fact-field--missing" : ""}`} key={definition.key}>
               <label htmlFor={`fact-${definition.key}`}>
                 <span>{definition.label}</span>
+                {isMissing ? <em>Needed</em> : null}
               </label>
-              <details className="technical-details">
-                <summary>Fact identifier</summary>
-                <code>{definition.key}</code>
-              </details>
               {options === undefined ? (
                 <input
                   id={`fact-${definition.key}`}
@@ -109,7 +100,6 @@ export function UserStatePanel({
                   ))}
                 </select>
               )}
-              {isMissing ? <span className="field-message">Required to evaluate a possible route</span> : null}
             </div>
           );
         })}
@@ -123,10 +113,6 @@ export function UserStatePanel({
       >
         {isBusy ? "Replanning…" : "Replan with updated facts"}
       </button>
-      <p className="deterministic-note">
-        <span aria-hidden="true">↻</span>
-        Replanning calls only the deterministic evaluator and planner—no Claude or browser collection.
-      </p>
     </section>
   );
 }

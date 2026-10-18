@@ -151,7 +151,8 @@ describe("Live personalization UX", () => {
     );
 
     expect(markup).toContain("Your facts");
-    expect(markup).toContain("payment.status");
+    expect(markup).toContain("Transfer status");
+    expect(markup).not.toContain("Fact identifier");
     expect(markup).toContain("Replan with updated facts");
     expect(markup).not.toContain('aria-disabled="true"');
   });
@@ -279,7 +280,7 @@ describe("Live progress and decision hierarchy", () => {
       createElement(SafeRoutePanel, { analysis }),
     );
 
-    expect(markup).toContain("Decision status");
+    expect(markup).toContain(">Decision<");
     expect(markup).toContain("Verified next steps");
     expect(markup).toContain("Verified guidance");
   });

@@ -44,7 +44,6 @@ export function PersonalizationPlaceholder({
     >
       <div className="panel-heading panel-heading--compact">
         <div>
-          <span className="section-number">02</span>
           <div>
             <p className="eyebrow">Questions</p>
             <h2 id="facts-heading">{copy.heading}</h2>

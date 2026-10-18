@@ -1,6 +1,5 @@
 type AppHeaderProps = Readonly<{
   portalName: string;
-  modeLabel: string;
   analyzeLabel: string;
   reanalyzeLabel: string;
   busyLabel: string;
@@ -12,7 +11,6 @@ type AppHeaderProps = Readonly<{
 
 export function AppHeader({
   portalName,
-  modeLabel,
   analyzeLabel,
   reanalyzeLabel,
   busyLabel,
@@ -43,10 +41,6 @@ export function AppHeader({
             <strong>{portalName}</strong>
           </span>
         </div>
-        <span className="mode-pill">
-          <span className="mode-pill__dot" aria-hidden="true" />
-          {modeLabel}
-        </span>
         <button
           className="button button--primary"
           type="button"

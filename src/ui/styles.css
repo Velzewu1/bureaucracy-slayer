@@ -155,8 +155,12 @@ code {
 }
 
 .portal-identity strong {
+  max-width: 16rem;
+  overflow: hidden;
   font-size: 0.78rem;
   font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .connection-dot,
@@ -270,15 +274,15 @@ a:focus-visible {
 main {
   width: min(1440px, calc(100% - 48px));
   margin: 0 auto;
-  padding: 52px 0 70px;
+  padding: 28px 0 48px;
 }
 
 .hero {
   display: flex;
   align-items: end;
   justify-content: space-between;
-  padding: 0 4px 36px;
-  gap: 40px;
+  padding: 0 4px 18px;
+  gap: 24px;
 }
 
 .hero-kicker {
@@ -295,10 +299,10 @@ main {
   max-width: 840px;
   margin: 0;
   color: var(--dark);
-  font-size: clamp(2.1rem, 4.5vw, 4.25rem);
+  font-size: clamp(1.7rem, 3vw, 2.6rem);
   font-weight: 780;
-  letter-spacing: -0.065em;
-  line-height: 0.98;
+  letter-spacing: -0.045em;
+  line-height: 1.08;
 }
 
 .hero h1 span {
@@ -405,6 +409,11 @@ main {
   color: #6f7b76;
   font-size: 0.66rem;
   line-height: 1.5;
+}
+
+.panel,
+.panel :is(h1, h2, h3) {
+  scroll-margin-top: 112px;
 }
 
 .panel {
@@ -1047,8 +1056,15 @@ main {
   gap: 8px;
   margin-bottom: 6px;
   color: #404a47;
-  font-size: 0.69rem;
+  font-size: 0.78rem;
   font-weight: 750;
+}
+
+.fact-field label em {
+  color: var(--amber);
+  font-style: normal;
+  font-size: 0.64rem;
+  font-weight: 800;
 }
 
 .fact-field label code {
@@ -1136,7 +1152,7 @@ main {
 .empty-results,
 .progress-panel {
   display: grid;
-  min-height: 450px;
+  min-height: 280px;
   place-items: center;
   align-content: center;
   padding: 40px;
@@ -1144,7 +1160,7 @@ main {
 }
 
 .progress-panel:has(.live-stage-list) {
-  min-height: 540px;
+  min-height: 360px;
 }
 
 .empty-results h2,
@@ -1570,7 +1586,7 @@ main {
 }
 
 .route-empty {
-  padding: 35px 20px;
+  padding: 18px 16px;
   border: 1px dashed #d2d9d1;
   border-radius: 12px;
   background: #fafbfa;
@@ -2359,7 +2375,8 @@ main {
 }
 
 @media (max-width: 1320px) {
-  .mode-pill {
+  .mode-pill,
+  .portal-identity {
     display: none;
   }
 }

@@ -45,6 +45,16 @@ export function readableReason(code: string): string {
   return reasonLabels[code] ?? code.replaceAll("_", " ").toLocaleLowerCase();
 }
 
+export function factLabel(
+  model: DemoAnalysis["model"],
+  key: string,
+): string {
+  return (
+    model.factDefinitions.find((definition) => definition.key === key)?.label ??
+    key.replaceAll(".", " ").replaceAll("_", " ")
+  );
+}
+
 export type RuleConditionState = "matched" | "not_matched" | "unresolved";
 export type RuleEvidenceState = "verified" | "rejected" | "unknown";
 
@@ -182,7 +192,9 @@ export function policyRulePresentations(analysis: DemoAnalysis) {
   });
 }
 
-export function planStatusPresentation(plan: SafeActionPlan): StatusPresentation {
+export function planStatusPresentation(
+  plan: Pick<SafeActionPlan, "status">,
+): StatusPresentation {
   switch (plan.status) {
     case "ready":
       return {

@@ -21,15 +21,11 @@ export function PolicyEvidencePanel({ analysis }: PolicyEvidencePanelProps) {
     <section className="panel evidence-panel" aria-labelledby="evidence-heading">
       <div className="panel-heading panel-heading--compact">
         <div>
-          <span className="section-number">07</span>
           <div>
-            <p className="eyebrow">Policy provenance</p>
-            <h2 id="evidence-heading">Verified source evidence</h2>
+            <p className="eyebrow">Evidence</p>
+            <h2 id="evidence-heading">Source text</h2>
           </div>
         </div>
-        <span className={`evidence-result evidence-result--${analysis.evidence.status}`}>
-          Evidence set: {analysis.evidence.status}
-        </span>
       </div>
 
       <p className="panel-intro">
@@ -38,7 +34,7 @@ export function PolicyEvidencePanel({ analysis }: PolicyEvidencePanelProps) {
       </p>
 
       <details className="full-evidence">
-        <summary>Browse all policy evidence ({cards.length})</summary>
+        <summary>View policy evidence ({cards.length})</summary>
         <div className="evidence-list">
           {cards.map((card) => (
             <article
@@ -84,12 +80,6 @@ export function PolicyEvidencePanel({ analysis }: PolicyEvidencePanelProps) {
               )}
               <dl className="evidence-meta">
                 <div>
-                  <dt>Rule</dt>
-                  <dd>
-                    <code>{card.ruleId}</code>
-                  </dd>
-                </div>
-                <div>
                   <dt>Applies when</dt>
                   <dd>{card.condition}</dd>
                 </div>
@@ -97,32 +87,15 @@ export function PolicyEvidencePanel({ analysis }: PolicyEvidencePanelProps) {
                   <dt>Source</dt>
                   <dd>
                     <a href={card.pageUrl} target="_blank" rel="noreferrer">
-                      {card.pageUrl}
+                      Open source
                     </a>
                   </dd>
                 </div>
-                <div>
-                  <dt>Binding</dt>
-                  <dd>
-                    <code>
-                      {card.pageId} / {card.blockId}
-                    </code>
-                  </dd>
-                </div>
               </dl>
-              {card.issueCodes.length > 0 ? (
-                <div className="issue-codes">
-                  {card.issueCodes.map((code) => (
-                    <span key={code}>{code}</span>
-                  ))}
-                </div>
-              ) : null}
               {card.issues.length > 0 ? (
                 <ul className="evidence-issue-list">
                   {card.issues.map((issue, index) => (
-                    <li key={`${issue.code}-${index}`}>
-                      <code>{issue.code}</code> {issue.message}
-                    </li>
+                    <li key={`${issue.code}-${index}`}>{issue.message}</li>
                   ))}
                   {card.additionalIssueCount > 0 ? (
                     <li>

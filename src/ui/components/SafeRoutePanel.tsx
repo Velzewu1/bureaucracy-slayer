@@ -1,7 +1,7 @@
 import type { DemoAnalysis } from "../types.js";
 import {
+  factLabel,
   planStatusPresentation,
-  readableReason,
   routeSteps,
 } from "../viewModel.js";
 
@@ -17,9 +17,8 @@ export function SafeRoutePanel({ analysis }: SafeRoutePanelProps) {
     <section className="panel route-panel" aria-labelledby="route-heading" aria-live="polite">
       <div className="panel-heading">
         <div>
-          <span className="section-number">03</span>
           <div>
-            <p className="eyebrow">Decision status</p>
+            <p className="eyebrow">Decision</p>
             <h2 id="route-heading">Verified guidance</h2>
           </div>
         </div>
@@ -32,13 +31,6 @@ export function SafeRoutePanel({ analysis }: SafeRoutePanelProps) {
         </div>
         <div>
           <strong>{status.summary}</strong>
-          <details className="technical-details">
-            <summary>Plan reference</summary>
-            <p>
-              Plan <code>{analysis.plan.id}</code> · User state revision{" "}
-              {analysis.plan.userStateRevision}
-            </p>
-          </details>
         </div>
       </div>
 
@@ -73,22 +65,18 @@ export function SafeRoutePanel({ analysis }: SafeRoutePanelProps) {
                     </div>
                   ) : (
                     <div className="observed-action">
-                      <span>Observed {step.observedActionKind}</span>
+                      <span>On the website</span>
                       <strong>{step.observedActionLabel}</strong>
-                      <code>{step.websiteActionId}</code>
                     </div>
                   )}
                   <details className="step-evidence">
-                    <summary>
-                      View supporting evidence ({step.citations.length})
-                    </summary>
+                    <summary>View policy evidence ({step.citations.length})</summary>
                     {step.citations.map((citation) => (
                       <blockquote key={`${citation.ruleId}-${citation.pageUrl}`}>
                         “{citation.excerpt}”
                         <footer>
-                          <code>{citation.ruleId}</code>
                           <a href={citation.pageUrl} target="_blank" rel="noreferrer">
-                            {citation.pageUrl}
+                            Source
                           </a>
                         </footer>
                       </blockquote>
@@ -114,28 +102,12 @@ export function SafeRoutePanel({ analysis }: SafeRoutePanelProps) {
           <strong>Required information</strong>
           <ul>
             {analysis.plan.missingFacts.map((fact) => (
-              <li key={fact}>
-                <code>{fact}</code>
-              </li>
+              <li key={fact}>{factLabel(analysis.model, fact)}</li>
             ))}
           </ul>
         </div>
       ) : null}
 
-      {analysis.plan.reasonCodes.length > 0 ? (
-        <div className="reason-strip">
-          {analysis.plan.reasonCodes.map((code) => (
-            <span title={readableReason(code)} key={code}>
-              {code}
-            </span>
-          ))}
-        </div>
-      ) : null}
-
-      <div className="guidance-warning">
-        <strong>Guidance only.</strong> Nothing here can submit, cancel, recover, or otherwise execute a
-        financial action.
-      </div>
     </section>
   );
 }
