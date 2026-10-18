@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import type { JsonScalar, UserState } from "../contracts/index.js";
+import { LiveExtractionGoalSchema } from "../orchestration/live-extraction-contract.js";
 import { FixtureDemoProvider } from "./adapters/fixtureDemoProvider.js";
 import {
   LiveExtractionClientError,
@@ -25,6 +26,7 @@ import type { PersonalizationView } from "./guidedPersonalization.js";
 import {
   applyAnalysisResult,
   beginModeAnalysis,
+  changeLiveGoal,
   createModeWorkspaceState,
   failModeAnalysis,
   failModeReplan,
@@ -156,7 +158,10 @@ export function App({
   provider,
   providers,
 }: AppProps) {
-  const [workspace, setWorkspace] = useState(() => createModeWorkspaceState(initialMode));
+  const initialProvider = providers?.[initialMode] ?? provider ?? defaultProvider(initialMode);
+  const [workspace, setWorkspace] = useState(() =>
+    createModeWorkspaceState(initialMode, initialProvider.recoveryGoal?.()),
+  );
   const [activity, setActivity] = useState<Activity>(null);
   const [liveProgress, setLiveProgress] = useState<LiveExtractionPhase | null>(null);
   const [personalizationView, setPersonalizationView] =
@@ -236,6 +241,19 @@ export function App({
 
   async function analyze(): Promise<void> {
     if (busyRef.current) return;
+    const goalResult =
+      workspace.mode === "live_sonnet"
+        ? LiveExtractionGoalSchema.safeParse(workspace.goal)
+        : { success: true as const, data: workspace.goal };
+    if (!goalResult.success) {
+      setWorkspace((current) => ({
+        ...current,
+        error: "Enter a non-empty goal without control characters within the configured size limit.",
+        errorKind: "analysis",
+      }));
+      return;
+    }
+    const startedGoal = goalResult.data;
     busyRef.current = true;
     const runId = runIdRef.current + 1;
     runIdRef.current = runId;
@@ -244,11 +262,11 @@ export function App({
     setActivity("analyzing");
     setLiveProgress(startedMode === "live_sonnet" ? "queued" : null);
     setPersonalizationView("guided");
-    setWorkspace(beginModeAnalysis);
+    setWorkspace((current) => beginModeAnalysis({ ...current, goal: startedGoal }));
     try {
       const result = await startedProvider.analyze(
         {
-          goal: workspace.goal,
+          goal: startedGoal,
           portalUrl: workspace.portalUrl,
           scenarioId: workspace.scenarioId,
           userState: workspace.userState,
@@ -407,9 +425,19 @@ export function App({
         <AnalysisSetup
           goal={workspace.goal}
           portalUrl={workspace.portalUrl}
-          isBusy={isBusy}
+          goalEditable={workspace.mode === "live_sonnet"}
+          isBusy={isBusy || canResumeLive || canRetryAmbiguousLive}
           hasAnalysis={workspace.analysis !== null}
-          goalNote="The goal and fictional portal are server-owned for this bounded demonstration."
+          onGoalChange={(goal) => {
+            if (!isBusy && !canResumeLive && !canRetryAmbiguousLive) {
+              setWorkspace((current) => changeLiveGoal(current, goal));
+            }
+          }}
+          goalNote={
+            workspace.mode === "live_sonnet"
+              ? "Your goal is sent to the bounded analysis pipeline; the fictional portal stays server-owned."
+              : "This goal belongs to the selected recorded demonstration."
+          }
         />
 
         {workspace.error === null ? null : (

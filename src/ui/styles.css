@@ -519,6 +519,19 @@ main {
   line-height: 1.5;
 }
 
+.goal-input {
+  width: 100%;
+  min-height: 6.5rem;
+  resize: vertical;
+  padding: 12px 14px;
+  border: 1px solid #cbd4cc;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.5;
+}
+
 .portal-field {
   display: flex;
   align-items: center;

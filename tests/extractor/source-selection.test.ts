@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { SiteSnapshotSchema, hashText } from "../../src/contracts/index.js";
-import { selectFocusedSources } from "../../src/extractor/index.js";
+import {
+  deriveObservedGoalScope,
+  selectFocusedSources,
+} from "../../src/extractor/index.js";
 import { recordedSonnetBundleInput } from "../../src/ui/generated/recordedSonnetBundle.js";
 import { RecordedExtractionBundleSchema } from "../../src/ui/recordedBundle.js";
 import { baseSnapshotFixture } from "../fixtures/p0.js";
@@ -106,6 +109,55 @@ function snapshotWithSeparateProhibition() {
 }
 
 describe("goal-focused source selection", () => {
+  it("derives distinct bounded scopes for cancellation, recovery, and recovery prerequisites", () => {
+    const snapshot = RecordedExtractionBundleSchema.parse(
+      recordedSonnetBundleInput,
+    ).sourceSnapshot;
+    const cases = [
+      {
+        goal: "Can I cancel a scheduled Standard transfer before processing starts?",
+        purpose: "Cancel transfer",
+        requiredBlockId: "block_c6e0f05342f8d9849468",
+        expectedCounts: { pages: 9, blocks: 70, actions: 20 },
+      },
+      {
+        goal: "Can I request recovery for a completed transfer?",
+        purpose: "Request recovery of a completed transfer",
+        requiredBlockId: "block_dd35d4ab423bc204bf21",
+        expectedCounts: { pages: 7, blocks: 66, actions: 15 },
+      },
+      {
+        goal: "What information do I need to submit a recovery request?",
+        purpose: "Submit recovery request",
+        requiredBlockId: "block_b9b4f21bf280d76622d6",
+        expectedCounts: { pages: 8, blocks: 62, actions: 20 },
+      },
+    ] as const;
+
+    const selections = cases.map(({ goal, purpose, requiredBlockId, expectedCounts }) => {
+      const scope = deriveObservedGoalScope(snapshot, goal);
+      expect(scope?.primaryActionPurpose).toBe(purpose);
+      const selection = selectFocusedSources(
+        snapshot,
+        goal,
+        { maxPages: 9, maxBlocks: 80, maxActions: 35 },
+        scope,
+      );
+      expect(selection.coverage).toBe("complete");
+      expect(selection.selectedCounts.pages).toBeLessThanOrEqual(9);
+      expect(selection.selectedCounts.blocks).toBeLessThanOrEqual(80);
+      expect(selection.selectedCounts.actions).toBeLessThanOrEqual(35);
+      expect(selection.selectedCounts).toEqual(expectedCounts);
+      expect(selectedBlockIds(selection)).toContain(requiredBlockId);
+      return selection;
+    });
+
+    expect(selections.map((selection) => selection.goalScope?.primaryActionPurpose))
+      .toEqual(cases.map(({ purpose }) => purpose));
+    expect(new Set(selections.map((selection) => JSON.stringify(selection.pages))).size).toBe(3);
+    expect(deriveObservedGoalScope(snapshot, "How do I close my mortgage?")).toBeUndefined();
+  });
+
   it("recovers the recorded operative permissions, exceptions, eligibility, and cancel control", () => {
     const bundle = RecordedExtractionBundleSchema.parse(recordedSonnetBundleInput);
     const budget = { maxPages: 9, maxBlocks: 80, maxActions: 35 } as const;

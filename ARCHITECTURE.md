@@ -270,6 +270,30 @@ never mutates the current `UserState` and performs no collection or extraction.
 5. UI displays steps and provenance.
 6. User changes a fact; steps 2-5 repeat with no collector or Claude call.
 
+### Live multi-goal request compatibility
+
+The controlled Northstar portal remains server-owned. Live start-request schema version 1
+retains its original meaning: it contains no goal and resolves to the legacy recorded demo
+goal. Schema version 2 adds one normalized user goal and still rejects a caller-supplied
+portal URL, model, tool, or extraction configuration. Goal normalization is NFKC plus outer
+whitespace trimming; empty goals, Unicode control/format characters, more than 2,000 UTF-16
+code units, or more than 4,096 UTF-8 bytes are rejected before a worker is allocated.
+
+Idempotency binds a request ID to both the normalized goal and the trusted startup portal
+identity. Repeating the same binding reuses the retained job. Reusing a request ID with a
+different goal or portal identity is a typed conflict and never starts work. Active records
+and expiration tombstones retain this binding. Same-tab reload recovery may retain the
+normalized goal only while work is pending because it is required to resume the exact
+request; terminal completion or failure clears it together with the request/job identifiers.
+
+The exact legacy goal keeps its verified cancellation/recovery source scope. Other goals are
+scoped deterministically from labels of WebsiteActions actually present in the trusted
+snapshot. Selection is capped at 9 pages, 80 evidence blocks, and 35 actions. A goal with no
+grounded observed action, or whose required policy/action context cannot fit those bounds,
+fails closed before model transport. Goal text can influence retrieval and model task data,
+but it cannot change the portal, system prompt, tools, model configuration, safety rules, or
+evidence requirements.
+
 ### Refresh flow
 
 1. Collector creates a new snapshot rather than mutating the old one.

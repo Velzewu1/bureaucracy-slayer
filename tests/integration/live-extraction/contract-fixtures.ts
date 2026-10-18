@@ -1,5 +1,10 @@
+import { ProcedureModelSchema } from "../../../src/contracts/index.js";
 import { validateEvidence } from "../../../src/evidence/index.js";
-import { auditSemanticQualifiers } from "../../../src/extractor/index.js";
+import {
+  auditSemanticQualifiers,
+  deriveObservedGoalScope,
+  selectFocusedSources,
+} from "../../../src/extractor/index.js";
 import {
   LIVE_EXTRACTION_POLL_INTERVAL_MS,
   LIVE_EXTRACTION_START_ROUTE,
@@ -19,6 +24,12 @@ import { RecordedExtractionBundleSchema } from "../../../src/ui/recordedBundle.j
 
 export const LIVE_TEST_GOAL =
   "I sent an $850 transfer to the wrong recipient. Can I cancel it? If not, what are my alternatives?";
+export const LIVE_TEST_CANCELLATION_GOAL =
+  "Can I cancel a scheduled Standard transfer before processing starts?";
+export const LIVE_TEST_RECOVERY_GOAL =
+  "Can I request recovery for a completed transfer?";
+export const LIVE_TEST_RECOVERY_PREREQUISITES_GOAL =
+  "What information do I need to submit a recovery request?";
 export const LIVE_TEST_PORTAL_URL = "http://127.0.0.1:5180/dashboard";
 export const LIVE_TEST_JOB_ID = "job_1234567890abcdef1234567890abcdef";
 export const LIVE_TEST_REQUEST_ID = "request_1234567890abcdef1234567890abcdef";
@@ -77,6 +88,240 @@ export function createLiveArtifactFixture(): LiveExtractionArtifact {
   });
 }
 
+function deterministicModelForGoal(goal: string) {
+  const recorded = RecordedExtractionBundleSchema.parse(recordedSonnetBundleInput);
+  const snapshot = recorded.sourceSnapshot;
+  const blockCitation = (blockId: string) => {
+    for (const page of snapshot.pages) {
+      const block = page.blocks.find((candidate) => candidate.id === blockId);
+      if (block !== undefined) {
+        return {
+          pageId: page.id,
+          pageUrl: page.url,
+          blockId: block.id,
+          excerpt: block.text,
+          actionIds: [],
+        };
+      }
+    }
+    throw new Error(`Missing deterministic fixture block ${blockId}.`);
+  };
+
+  if (goal === LIVE_TEST_CANCELLATION_GOAL) {
+    return ProcedureModelSchema.parse({
+      schemaVersion: 1,
+      id: "procedure_fixture_cancel_transfer",
+      sourceSnapshotId: snapshot.id,
+      sourceSnapshotHash: snapshot.contentHash,
+      extractedAt: COMPLETED_AT,
+      goalSummary: "Determine whether a scheduled Standard transfer can be canceled before processing starts.",
+      factDefinitions: [
+        {
+          key: "transfer_status",
+          label: "Transfer status",
+          type: "string",
+          allowedValues: ["scheduled", "processing", "completed"],
+          sensitive: false,
+        },
+        {
+          key: "transfer_type",
+          label: "Transfer type",
+          type: "string",
+          allowedValues: ["standard", "instant"],
+          sensitive: false,
+        },
+        {
+          key: "processing_started",
+          label: "Transfer processing has begun",
+          type: "boolean",
+          sensitive: false,
+        },
+      ],
+      actions: [{
+        id: "proc_cancel_transfer",
+        kind: "interact",
+        label: "Cancel transfer",
+        description: "Use the observed Cancel transfer control only when every policy condition is satisfied.",
+        websiteActionId: "action_cec971f543cc085511e5",
+        prerequisiteActionIds: [],
+        terminal: true,
+      }],
+      goalActionIds: ["proc_cancel_transfer"],
+      rules: [
+        {
+          id: "rule_fixture_permit_cancel_standard",
+          actionId: "proc_cancel_transfer",
+          appliesWhen: {
+            kind: "all",
+            conditions: [
+              { kind: "fact", fact: "transfer_status", op: "eq", value: "scheduled" },
+              { kind: "fact", fact: "transfer_type", op: "eq", value: "standard" },
+              { kind: "fact", fact: "processing_started", op: "eq", value: false },
+            ],
+          },
+          citations: [blockCitation("block_fc059175893c4915951c")],
+          semanticConfidence: 1,
+          needsReview: false,
+          effect: "permit",
+        },
+        {
+          id: "rule_fixture_prohibit_cancel_instant",
+          actionId: "proc_cancel_transfer",
+          appliesWhen: { kind: "fact", fact: "transfer_type", op: "eq", value: "instant" },
+          citations: [blockCitation("block_0408d3189733d101eb07")],
+          semanticConfidence: 1,
+          needsReview: false,
+          effect: "prohibit",
+        },
+        {
+          id: "rule_fixture_prohibit_cancel_processing",
+          actionId: "proc_cancel_transfer",
+          appliesWhen: { kind: "fact", fact: "processing_started", op: "eq", value: true },
+          citations: [blockCitation("block_c6e0f05342f8d9849468")],
+          semanticConfidence: 1,
+          needsReview: false,
+          effect: "prohibit",
+        },
+        {
+          id: "rule_fixture_prohibit_cancel_completed",
+          actionId: "proc_cancel_transfer",
+          appliesWhen: { kind: "fact", fact: "transfer_status", op: "eq", value: "completed" },
+          citations: [blockCitation("block_d05c4b0d40cf058b55be")],
+          semanticConfidence: 1,
+          needsReview: false,
+          effect: "prohibit",
+        },
+        {
+          id: "rule_fixture_prohibit_cancel_unavailable_status",
+          actionId: "proc_cancel_transfer",
+          appliesWhen: {
+            kind: "any",
+            conditions: [
+              { kind: "fact", fact: "transfer_status", op: "eq", value: "processing" },
+              { kind: "fact", fact: "transfer_status", op: "eq", value: "completed" },
+            ],
+          },
+          citations: [blockCitation("block_7205f3b02098bdd5cda6")],
+          semanticConfidence: 1,
+          needsReview: false,
+          effect: "prohibit",
+        },
+      ],
+    });
+  }
+
+  if (
+    goal === LIVE_TEST_RECOVERY_GOAL ||
+    goal === LIVE_TEST_RECOVERY_PREREQUISITES_GOAL
+  ) {
+    const keepActions = new Set([
+      "proc_open_support",
+      "proc_provide_reference_and_recipient",
+      "proc_provide_description_and_email",
+      "proc_submit_recovery_request",
+    ]);
+    const keepRules = new Set([
+      "rule_r4_permit_recovery_completed_self_initiated",
+      "rule_r5_prohibit_recovery_not_initiated",
+      "rule_r6_require_recovery_reference_and_recipient",
+      "rule_r7_require_recovery_description_and_email",
+      "rule_r8_require_instant_completed_before_recovery",
+    ]);
+    const model = structuredClone(recorded.procedureModel);
+    return ProcedureModelSchema.parse({
+      ...model,
+      id:
+        goal === LIVE_TEST_RECOVERY_GOAL
+          ? "procedure_fixture_completed_recovery"
+          : "procedure_fixture_recovery_requirements",
+      goalSummary:
+        goal === LIVE_TEST_RECOVERY_GOAL
+          ? "Determine eligibility and the grounded steps for requesting recovery of a completed transfer."
+          : "Identify the information and steps required to submit a completed-transfer recovery request.",
+      actions: model.actions.filter((action) => keepActions.has(action.id)),
+      goalActionIds: ["proc_submit_recovery_request"],
+      rules: model.rules
+        .filter((rule) => keepRules.has(rule.id))
+        .map((rule) =>
+          rule.id === "rule_r4_permit_recovery_completed_self_initiated"
+            ? {
+                ...rule,
+                needsReview: false,
+                reviewReason: undefined,
+                citations: [
+                  blockCitation("block_4b3e165045ebe5b2a429"),
+                  blockCitation("block_ef8db3de371a0edb6f58"),
+                ],
+              }
+            : rule,
+        ),
+    });
+  }
+  return undefined;
+}
+
+/** Explicit hand-authored offline fixture; never represented as a Sonnet response. */
+export function createGoalSpecificLiveArtifactFixture(
+  goal: string,
+): LiveExtractionArtifact | undefined {
+  const recorded = RecordedExtractionBundleSchema.parse(recordedSonnetBundleInput);
+  const snapshot = recorded.sourceSnapshot;
+  const model = deterministicModelForGoal(goal);
+  if (model === undefined) return undefined;
+  const scope = deriveObservedGoalScope(snapshot, goal);
+  if (scope === undefined) return undefined;
+  const selection = selectFocusedSources(
+    snapshot,
+    goal,
+    { maxPages: 9, maxBlocks: 80, maxActions: 35 },
+    scope,
+  );
+  if (selection.coverage !== "complete") return undefined;
+  const semanticAudit = auditSemanticQualifiers(snapshot, model);
+  const validation = validateEvidence(
+    snapshot,
+    model,
+    {
+      evidenceResultId: `evidence_fixture_${model.id}`,
+      checkedAt: COMPLETED_AT,
+    },
+    semanticAudit.findings.map((finding) => ({
+      ruleId: finding.ruleId,
+      message: finding.message,
+    })),
+  );
+  if (!validation.ok) {
+    throw new Error(`Goal-specific fixture failed evidence validation: ${validation.issues.join("; ")}`);
+  }
+  return LiveExtractionArtifactSchema.parse({
+    schemaVersion: 1,
+    artifactKind: "live_sonnet_extraction",
+    goal,
+    portalUrl: LIVE_TEST_PORTAL_URL,
+    sourceSnapshot: snapshot,
+    procedureModel: validation.model,
+    evidence: validation.evidence,
+    sourceSelection: {
+      sourceSnapshotId: selection.sourceSnapshotId,
+      sourceSnapshotHash: selection.sourceSnapshotHash,
+      userGoal: goal,
+      selectionMode: "goal_scoped",
+      semanticCoverage: "not_verified",
+      coverage: "complete",
+      limitations: [],
+      originalCounts: selection.originalCounts,
+      selectedCounts: selection.selectedCounts,
+      selectedPageIds: selection.pages.map((page) => page.pageId),
+    },
+    semanticAudit,
+    provenance: {
+      extractionType: "live",
+      modelName: "deterministic-offline-test-fixture",
+      completedAt: COMPLETED_AT,
+    },
+  });
+}
+
 export function createLiveStartRequestFixture(
   requestId = LIVE_TEST_REQUEST_ID,
 ): LiveExtractionStartRequest {
@@ -87,12 +332,14 @@ export function createLiveStartRequestFixture(
   });
 }
 
-export function createLiveStartResponseFixture(): LiveExtractionStartResponse {
+export function createLiveStartResponseFixture(
+  jobId: string = LIVE_TEST_JOB_ID,
+): LiveExtractionStartResponse {
   return LiveExtractionStartResponseSchema.parse({
     schemaVersion: 1,
-    jobId: LIVE_TEST_JOB_ID,
+    jobId,
     state: "queued",
-    statusUrl: `${LIVE_EXTRACTION_START_ROUTE}/${LIVE_TEST_JOB_ID}`,
+    statusUrl: `${LIVE_EXTRACTION_START_ROUTE}/${jobId}`,
     pollAfterMs: LIVE_EXTRACTION_POLL_INTERVAL_MS,
   });
 }
@@ -198,7 +445,8 @@ export function createTamperedLiveStatusFixture(): unknown {
 
 export function createLiveErrorResponseFixture(
   code: "REQUEST_INVALID" | "REQUEST_TOO_LARGE" | "UNSUPPORTED_ACTION" |
-    "UNSUPPORTED_MEDIA_TYPE" | "JOB_ALREADY_RUNNING" | "JOB_NOT_FOUND" | "JOB_EXPIRED",
+    "UNSUPPORTED_MEDIA_TYPE" | "REQUEST_IDENTITY_MISMATCH" | "JOB_ALREADY_RUNNING" |
+    "JOB_NOT_FOUND" | "JOB_EXPIRED",
 ): LiveExtractionErrorResponse {
   const stage = code.startsWith("JOB_") ? "job" : "request";
   return LiveExtractionErrorResponseSchema.parse({

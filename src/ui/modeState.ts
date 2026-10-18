@@ -44,13 +44,16 @@ function copyUserState(userState: UserState): UserState {
   };
 }
 
-export function createModeWorkspaceState(mode: DemoMode): ModeWorkspaceState {
+export function createModeWorkspaceState(
+  mode: DemoMode,
+  recoveredLiveGoal?: string,
+): ModeWorkspaceState {
   const recorded = mode === "recorded_sonnet";
   const live = mode === "live_sonnet";
   return {
     mode,
     goal: live
-      ? LIVE_DEMO_GOAL
+      ? recoveredLiveGoal ?? LIVE_DEMO_GOAL
       : recorded
         ? recordedExtractionBundle.extractionGoal
         : demoGoal,
@@ -75,6 +78,23 @@ export function createModeWorkspaceState(mode: DemoMode): ModeWorkspaceState {
   };
 }
 
+export function changeLiveGoal(
+  current: ModeWorkspaceState,
+  goal: string,
+): ModeWorkspaceState {
+  if (current.mode !== "live_sonnet" || current.goal === goal) return current;
+  return {
+    ...current,
+    goal,
+    analysis: null,
+    originalAnalysis: null,
+    userState: { schemaVersion: 1, revision: 0, facts: {} },
+    isDirty: false,
+    error: null,
+    errorKind: null,
+  };
+}
+
 export function applyAnalysisResult(
   current: ModeWorkspaceState,
   expectedMode: DemoMode,
@@ -84,6 +104,7 @@ export function applyAnalysisResult(
   if (current.mode !== expectedMode || analysis.mode !== expectedMode) return current;
   return {
     ...current,
+    goal: analysis.goal,
     analysis,
     originalAnalysis: kind === "analysis" ? analysis : current.originalAnalysis,
     userState: analysis.userState,

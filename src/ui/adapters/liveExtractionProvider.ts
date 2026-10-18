@@ -10,9 +10,11 @@ import { analyzeDecisionIntelligence } from "../../decision/index.js";
 import { evaluatePolicies, planActions } from "../../engine/index.js";
 import {
   LIVE_EXTRACTION_POLL_INTERVAL_MS,
+  LIVE_EXTRACTION_LEGACY_GOAL,
   LIVE_EXTRACTION_START_ROUTE,
   LIVE_EXTRACTION_TERMINAL_RETENTION_MS,
   LiveExtractionErrorResponseSchema,
+  LiveExtractionGoalSchema,
   LiveExtractionJobIdSchema,
   LiveExtractionJobStatusSchema,
   LiveExtractionRequestIdSchema,
@@ -96,7 +98,7 @@ export type LiveExtractionRecoveryStorage = Pick<
   "getItem" | "setItem" | "removeItem"
 >;
 
-const LiveExtractionRecoveryMetadataSchema = z.discriminatedUnion("kind", [
+const LiveExtractionRecoveryMetadataSchema = z.union([
   z
     .object({
       schemaVersion: z.literal(1),
@@ -110,6 +112,26 @@ const LiveExtractionRecoveryMetadataSchema = z.discriminatedUnion("kind", [
       schemaVersion: z.literal(1),
       kind: z.literal("job"),
       requestId: LiveExtractionRequestIdSchema,
+      createdAtMs: z.number().int().nonnegative(),
+      jobId: LiveExtractionJobIdSchema,
+      statusUrl: z.string().min(1),
+    })
+    .strict(),
+  z
+    .object({
+      schemaVersion: z.literal(2),
+      kind: z.literal("request"),
+      requestId: LiveExtractionRequestIdSchema,
+      goal: LiveExtractionGoalSchema,
+      createdAtMs: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      schemaVersion: z.literal(2),
+      kind: z.literal("job"),
+      requestId: LiveExtractionRequestIdSchema,
+      goal: LiveExtractionGoalSchema,
       createdAtMs: z.number().int().nonnegative(),
       jobId: LiveExtractionJobIdSchema,
       statusUrl: z.string().min(1),
@@ -129,6 +151,7 @@ export type LiveExtractionProviderOptions = Readonly<{
 
 type ActiveRequest = {
   requestId: LiveExtractionRequestId;
+  goal: string;
   requestState: "pending" | "ambiguous";
   createdAtMs: number;
   jobId?: LiveExtractionJobId;
@@ -237,6 +260,7 @@ function isDefinitiveStartRejection(
 ): boolean {
   switch (code) {
     case "REQUEST_INVALID":
+    case "REQUEST_IDENTITY_MISMATCH":
     case "REQUEST_TOO_LARGE":
     case "UNSUPPORTED_ACTION":
     case "UNSUPPORTED_MEDIA_TYPE":
@@ -318,6 +342,7 @@ export class LiveExtractionProvider implements DemoDataProvider {
       }
       this.#activeRequest = {
         requestId: metadata.requestId,
+        goal: metadata.schemaVersion === 1 ? LIVE_EXTRACTION_LEGACY_GOAL : metadata.goal,
         requestState: "ambiguous",
         createdAtMs: metadata.createdAtMs,
         jobId: metadata.jobId,
@@ -335,6 +360,7 @@ export class LiveExtractionProvider implements DemoDataProvider {
     }
     this.#activeRequest = {
       requestId: metadata.requestId,
+      goal: metadata.schemaVersion === 1 ? LIVE_EXTRACTION_LEGACY_GOAL : metadata.goal,
       requestState: "ambiguous",
       createdAtMs: metadata.createdAtMs,
     };
@@ -345,17 +371,19 @@ export class LiveExtractionProvider implements DemoDataProvider {
     const metadata =
       active.jobId !== undefined && active.statusUrl !== undefined
         ? {
-            schemaVersion: 1 as const,
+            schemaVersion: 2 as const,
             kind: "job" as const,
             requestId: active.requestId,
+            goal: active.goal,
             createdAtMs: active.createdAtMs,
             jobId: active.jobId,
             statusUrl: active.statusUrl,
           }
         : {
-            schemaVersion: 1 as const,
+            schemaVersion: 2 as const,
             kind: "request" as const,
             requestId: active.requestId,
+            goal: active.goal,
             createdAtMs: active.createdAtMs,
           };
     try {
@@ -454,9 +482,10 @@ export class LiveExtractionProvider implements DemoDataProvider {
       return { jobId: active.jobId, statusUrl: active.statusUrl };
     }
     const request = LiveExtractionStartRequestSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: 2,
       action: "start_live_extraction",
       requestId: active.requestId,
+      goal: active.goal,
     });
     active.requestState = "pending";
     let response: Response;
@@ -600,12 +629,14 @@ export class LiveExtractionProvider implements DemoDataProvider {
     options: AnalysisRunOptions | undefined,
     operation: Operation,
   ): Promise<DemoAnalysis> {
-    if (request.goal !== LIVE_DEMO_GOAL) {
+    const goalResult = LiveExtractionGoalSchema.safeParse(request.goal);
+    if (!goalResult.success) {
       throw new LiveExtractionClientError(
-        "GOAL_MISMATCH",
-        "Live Sonnet mode is locked to the server-owned extraction goal.",
+        "REQUEST_INVALID",
+        "Enter a non-empty goal without control characters within the configured size limit.",
       );
     }
+    const normalizedGoal = goalResult.data;
     if (request.portalUrl !== LIVE_DEMO_PORTAL_URL) {
       throw new LiveExtractionClientError(
         "PORTAL_MISMATCH",
@@ -620,13 +651,21 @@ export class LiveExtractionProvider implements DemoDataProvider {
       );
     }
     let active = this.#activeRequest;
+    if (active !== undefined && active.goal !== normalizedGoal) {
+      throw new LiveExtractionClientError(
+        "GOAL_MISMATCH",
+        "The pending live extraction belongs to a different goal.",
+      );
+    }
     if (active === undefined) {
       active = {
         requestId: this.#generateRequestId(),
+        goal: normalizedGoal,
         requestState: "pending",
         createdAtMs: this.#nowMs(),
       };
       this.#activeRequest = active;
+      this.#session = undefined;
       this.#persistRecovery(active, true);
     }
     this.#emit(options, "queued");
@@ -650,10 +689,10 @@ export class LiveExtractionProvider implements DemoDataProvider {
       }
 
       const verified = verifyLiveExtractionArtifact(status.result);
-      if (verified.artifact.goal !== LIVE_DEMO_GOAL) {
+      if (verified.artifact.goal !== normalizedGoal) {
         throw new LiveExtractionClientError(
           "GOAL_MISMATCH",
-          "The live result did not match the fixed extraction goal.",
+          "The live result did not match the requested goal.",
         );
       }
       if (verified.artifact.portalUrl !== LIVE_DEMO_PORTAL_URL) {
@@ -718,6 +757,15 @@ export class LiveExtractionProvider implements DemoDataProvider {
           .catch(() => undefined)
           .then(() => this.analyze(request, options));
       }
+      const goal = LiveExtractionGoalSchema.safeParse(request.goal);
+      if (!goal.success || this.#activeRequest?.goal !== goal.data) {
+        return Promise.reject(
+          new LiveExtractionClientError(
+            "GOAL_MISMATCH",
+            "A different goal cannot reuse the current extraction request.",
+          ),
+        );
+      }
       return this.#inFlight;
     }
     const operation: Operation = {
@@ -756,6 +804,10 @@ export class LiveExtractionProvider implements DemoDataProvider {
     if (this.#recoveryBlocked) return "blocked";
     if (active?.requestState === "ambiguous") return "request";
     return "none";
+  }
+
+  recoveryGoal(): string | undefined {
+    return this.#activeRequest?.goal;
   }
 
   async replan(sessionId: string, userState: UserState): Promise<DemoAnalysis> {

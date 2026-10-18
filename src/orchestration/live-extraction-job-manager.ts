@@ -6,8 +6,11 @@ import {
   LIVE_EXTRACTION_START_ROUTE,
   LIVE_EXTRACTION_TERMINAL_RETENTION_MS,
   LiveExtractionFailureSchema,
+  LiveExtractionGoalSchema,
+  LIVE_EXTRACTION_LEGACY_GOAL,
   type LiveExtractionArtifact,
   type LiveExtractionFailure,
+  type LiveExtractionGoal,
   type LiveExtractionJobId,
   type LiveExtractionJobStatus,
   type LiveExtractionRequestId,
@@ -23,6 +26,7 @@ export type LiveExtractionRunningPhase =
 
 export type LiveExtractionRunContext = Readonly<{
   deadlineAtMs: number;
+  goal: LiveExtractionGoal;
   setPhase(phase: LiveExtractionRunningPhase): void;
 }>;
 
@@ -48,6 +52,8 @@ export type LiveExtractionJobClock = Readonly<{
 
 export type LiveExtractionJobManagerOptions = Readonly<{
   runner: LiveExtractionRunner;
+  /** Trusted server startup identity; never accepted from the HTTP request. */
+  portalIdentity?: string;
   clock?: LiveExtractionJobClock;
   createJobId?: () => LiveExtractionJobId;
   timeoutMs?: number;
@@ -67,11 +73,18 @@ export type GetJobOutcome =
 
 type JobRecord = {
   status: LiveExtractionJobStatus;
+  binding: JobBinding;
 };
+
+type JobBinding = Readonly<{
+  goal: LiveExtractionGoal;
+  portalIdentity: string;
+}>;
 
 type Tombstone = Readonly<{
   jobId: LiveExtractionJobId;
   requestId: LiveExtractionRequestId;
+  binding: JobBinding;
   // Minimal expiration metadata needed to replay the frozen idempotent start response.
   stateAtExpiration: "succeeded" | "failed";
   expiresAtMs: number;
@@ -129,8 +142,23 @@ function occupiedFailure(): LiveExtractionFailure {
   };
 }
 
+function identityMismatchFailure(): LiveExtractionFailure {
+  return {
+    code: "REQUEST_IDENTITY_MISMATCH",
+    stage: "request",
+    message: "The request ID is already bound to a different goal or trusted portal.",
+    retryable: false,
+    issueCodes: ["REQUEST_IDENTITY_MISMATCH"],
+  };
+}
+
+function sameBinding(left: JobBinding, right: JobBinding): boolean {
+  return left.goal === right.goal && left.portalIdentity === right.portalIdentity;
+}
+
 export class LiveExtractionJobManager {
   readonly #runner: LiveExtractionRunner;
+  readonly #portalIdentity: string;
   readonly #clock: LiveExtractionJobClock;
   readonly #createJobId: () => LiveExtractionJobId;
   readonly #timeoutMs: number;
@@ -148,6 +176,7 @@ export class LiveExtractionJobManager {
 
   constructor(options: LiveExtractionJobManagerOptions) {
     this.#runner = options.runner;
+    this.#portalIdentity = options.portalIdentity ?? "legacy-controlled-portal";
     this.#clock = options.clock ?? systemClock;
     this.#createJobId = options.createJobId ?? randomJobId;
     this.#timeoutMs = options.timeoutMs ?? LIVE_EXTRACTION_JOB_TIMEOUT_MS;
@@ -166,19 +195,45 @@ export class LiveExtractionJobManager {
     }
   }
 
-  start(requestId: LiveExtractionRequestId): StartJobOutcome {
+  start(
+    requestId: LiveExtractionRequestId,
+    goalInput: string = LIVE_EXTRACTION_LEGACY_GOAL,
+  ): StartJobOutcome {
     this.#cleanup();
+    const goal = LiveExtractionGoalSchema.safeParse(goalInput);
+    if (!goal.success) {
+      return {
+        ok: false,
+        failure: {
+          code: "REQUEST_INVALID",
+          stage: "request",
+          message: "The extraction goal is invalid.",
+          retryable: false,
+          issueCodes: ["GOAL_INVALID"],
+        },
+      };
+    }
+    const binding: JobBinding = {
+      goal: goal.data,
+      portalIdentity: this.#portalIdentity,
+    };
 
     const retainedJobId = this.#requestJobs.get(requestId);
     if (retainedJobId !== undefined) {
       const retained = this.#jobs.get(retainedJobId);
       if (retained !== undefined) {
+        if (!sameBinding(retained.binding, binding)) {
+          return { ok: false, failure: identityMismatchFailure() };
+        }
         return { ok: true, response: this.#startResponse(retained.status) };
       }
     }
 
     const tombstone = this.#requestTombstones.get(requestId);
     if (tombstone !== undefined) {
+      if (!sameBinding(tombstone.binding, binding)) {
+        return { ok: false, failure: identityMismatchFailure() };
+      }
       return {
         ok: true,
         response: {
@@ -206,7 +261,7 @@ export class LiveExtractionJobManager {
       createdAt: now,
       updatedAt: now,
     };
-    this.#jobs.set(jobId, { status });
+    this.#jobs.set(jobId, { status, binding });
     this.#requestJobs.set(requestId, jobId);
     this.#physicalWorkerJobId = jobId;
     queueMicrotask(() => void this.#execute(jobId));
@@ -263,6 +318,7 @@ export class LiveExtractionJobManager {
     try {
       const result = await this.#runner({
         deadlineAtMs,
+        goal: record.binding.goal,
         setPhase: (phase) => this.#setPhase(jobId, phase),
       });
       this.#finish(jobId, { kind: "success", result });
@@ -365,6 +421,7 @@ export class LiveExtractionJobManager {
     const tombstone: Tombstone = {
       jobId,
       requestId: record.status.requestId,
+      binding: record.binding,
       stateAtExpiration: record.status.state,
       expiresAtMs,
     };

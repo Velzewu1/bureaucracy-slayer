@@ -24,7 +24,9 @@ export async function main(args: readonly string[] = process.argv.slice(2)): Pro
   const failed = args.includes("--failed");
   const api = await startLiveMockApi({
     port: resolveMockApiPort(),
-    ...(failed ? { timeline: [createLiveFailedStatusFixture()] } : {}),
+    ...(failed
+      ? { timeline: [createLiveFailedStatusFixture()] }
+      : { goalAware: true }),
   });
   process.stdout.write(`Offline Live Extraction mock listening on ${api.origin}\n`);
 

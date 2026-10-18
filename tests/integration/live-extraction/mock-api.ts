@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 
 import {
   LIVE_EXTRACTION_MAX_REQUEST_BODY_BYTES,
+  LIVE_EXTRACTION_LEGACY_GOAL,
   LIVE_EXTRACTION_START_ROUTE,
   LiveExtractionJobIdSchema,
   LiveExtractionJobStatusSchema,
@@ -10,8 +11,10 @@ import {
 } from "../../../src/orchestration/live-extraction-contract.js";
 import {
   createLiveErrorResponseFixture,
+  createGoalSpecificLiveArtifactFixture,
   createLiveJobTimelineFixture,
   createLiveStartResponseFixture,
+  createLiveArtifactFixture,
   LIVE_TEST_JOB_ID,
 } from "./contract-fixtures.js";
 
@@ -41,6 +44,7 @@ export type LiveMockApi = Readonly<{
   origin: string;
   requests: readonly MockRequestRecord[];
   physicalJobStarts: number;
+  submittedGoals: readonly string[];
   close: () => Promise<void>;
 }>;
 
@@ -49,7 +53,58 @@ type StartLiveMockApiOptions = Readonly<{
   rawTimeline?: readonly unknown[];
   expiredJobIds?: readonly string[];
   port?: number;
+  goalAware?: boolean;
 }>;
+
+type GoalAwareRecord = {
+  requestId: string;
+  goal: string;
+  jobId: string;
+  statusIndex: number;
+  timeline: readonly LiveExtractionJobStatus[];
+};
+
+function goalAwareTimeline(
+  requestId: string,
+  jobId: string,
+  goal: string,
+): readonly LiveExtractionJobStatus[] {
+  const artifact =
+    goal === LIVE_EXTRACTION_LEGACY_GOAL
+      ? createLiveArtifactFixture()
+      : createGoalSpecificLiveArtifactFixture(goal);
+  const base = createLiveJobTimelineFixture();
+  if (artifact === undefined) {
+    const first = base[0];
+    if (first === undefined) throw new Error("The mock timeline is unavailable.");
+    return [LiveExtractionJobStatusSchema.parse({
+      ...first,
+      jobId,
+      requestId,
+      state: "failed",
+      phase: "failed",
+      updatedAt: "2026-10-17T12:00:00.000Z",
+      startedAt: "2026-10-17T11:58:01.000Z",
+      completedAt: "2026-10-17T12:00:00.000Z",
+      expiresAt: "2026-10-17T12:15:00.000Z",
+      error: {
+        code: "SOURCE_SELECTION_INCOMPLETE",
+        stage: "source_selection",
+        message: "The deterministic offline mock has no grounded fixture for this goal.",
+        retryable: false,
+        issueCodes: ["NO_GROUNDED_TEST_FIXTURE"],
+      },
+    })];
+  }
+  return base.map((status) =>
+    LiveExtractionJobStatusSchema.parse({
+      ...status,
+      jobId,
+      requestId,
+      ...(status.state === "succeeded" ? { result: artifact } : {}),
+    }),
+  );
+}
 
 function writeJson(
   response: ServerResponse,
@@ -154,10 +209,15 @@ export async function startLiveMockApi(
     assertValidLiveJobTimeline(options.timeline ?? createLiveJobTimelineFixture());
   if (timeline.length === 0) throw new Error("A mock live job timeline must not be empty.");
   const requests: MockRequestRecord[] = [];
+  const submittedGoals: string[] = [];
   const expiredJobIds = new Set(options.expiredJobIds ?? []);
   let acceptedRequestId: string | undefined;
   let statusIndex = 0;
   let physicalJobStarts = 0;
+  let goalAwareSequence = 0;
+  let activeGoalAwareJobId: string | undefined;
+  const goalAwareByRequest = new Map<string, GoalAwareRecord>();
+  const goalAwareByJob = new Map<string, GoalAwareRecord>();
 
   const server: Server = createServer((request, response) => {
     void (async () => {
@@ -196,6 +256,52 @@ export async function startLiveMockApi(
           writeJson(response, 400, createLiveErrorResponseFixture(code));
           return;
         }
+        if (options.goalAware === true) {
+          const goal = parsed.data.schemaVersion === 1
+            ? LIVE_EXTRACTION_LEGACY_GOAL
+            : parsed.data.goal;
+          const existing = goalAwareByRequest.get(parsed.data.requestId);
+          if (existing !== undefined) {
+            if (existing.goal !== goal) {
+              writeJson(
+                response,
+                409,
+                createLiveErrorResponseFixture("REQUEST_IDENTITY_MISMATCH"),
+              );
+              return;
+            }
+            const start = createLiveStartResponseFixture(existing.jobId);
+            writeJson(response, 202, start, {
+              location: start.statusUrl,
+              "retry-after": "1",
+            });
+            return;
+          }
+          if (activeGoalAwareJobId !== undefined) {
+            writeJson(response, 409, createLiveErrorResponseFixture("JOB_ALREADY_RUNNING"));
+            return;
+          }
+          goalAwareSequence += 1;
+          const jobId = `job_${goalAwareSequence.toString(16).padStart(32, "0")}`;
+          const record: GoalAwareRecord = {
+            requestId: parsed.data.requestId,
+            goal,
+            jobId,
+            statusIndex: 0,
+            timeline: goalAwareTimeline(parsed.data.requestId, jobId, goal),
+          };
+          goalAwareByRequest.set(record.requestId, record);
+          goalAwareByJob.set(record.jobId, record);
+          activeGoalAwareJobId = record.jobId;
+          submittedGoals.push(goal);
+          physicalJobStarts += 1;
+          const start = createLiveStartResponseFixture(jobId);
+          writeJson(response, 202, start, {
+            location: start.statusUrl,
+            "retry-after": "1",
+          });
+          return;
+        }
         if (acceptedRequestId !== undefined && parsed.data.requestId !== acceptedRequestId) {
           writeJson(response, 409, createLiveErrorResponseFixture("JOB_ALREADY_RUNNING"));
           return;
@@ -221,6 +327,21 @@ export async function startLiveMockApi(
         }
         if (expiredJobIds.has(jobId)) {
           writeJson(response, 410, createLiveErrorResponseFixture("JOB_EXPIRED"));
+          return;
+        }
+        if (options.goalAware === true) {
+          const record = goalAwareByJob.get(jobId);
+          if (record === undefined) {
+            writeJson(response, 404, createLiveErrorResponseFixture("JOB_NOT_FOUND"));
+            return;
+          }
+          const next = record.timeline[Math.min(record.statusIndex, record.timeline.length - 1)];
+          if (next === undefined) throw new Error("The goal-aware mock timeline is empty.");
+          record.statusIndex += 1;
+          if (next.state === "succeeded" || next.state === "failed") {
+            activeGoalAwareJobId = undefined;
+          }
+          writeJson(response, 200, next);
           return;
         }
         if (jobId !== LIVE_TEST_JOB_ID || acceptedRequestId === undefined) {
@@ -281,6 +402,7 @@ export async function startLiveMockApi(
     get physicalJobStarts() {
       return physicalJobStarts;
     },
+    submittedGoals,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error === undefined ? resolve() : reject(error)));

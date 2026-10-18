@@ -25,6 +25,7 @@ import {
 import {
   applyAnalysisResult,
   beginModeAnalysis,
+  changeLiveGoal,
   createModeWorkspaceState,
   failModeAnalysis,
 } from "../../src/ui/modeState.js";
@@ -49,19 +50,19 @@ function resumableProvider(resumeState: LiveResumeState): DemoDataProvider {
 }
 
 describe("Live personalization UX", () => {
-  it("presents the server-owned goal as locked context rather than a disabled form field", () => {
+  it("presents an editable live goal while keeping the portal locked", () => {
     const markup = renderToStaticMarkup(
       createElement(App, { initialMode: "live_sonnet" }),
     );
 
-    expect(markup).toContain('data-testid="locked-goal"');
-    expect(markup).toContain("Locked demo goal");
+    expect(markup).toContain('<textarea id="user-goal"');
+    expect(markup).toContain("Editable goal");
     expect(markup).toContain(LIVE_DEMO_GOAL);
     expect(markup).toContain(
-      "The goal and fictional portal are server-owned for this bounded demonstration.",
+      "the fictional portal stays server-owned",
     );
-    expect(markup).not.toContain('id="user-goal"');
-    expect(markup).not.toContain("<textarea");
+    expect(markup).toContain("Selected portal");
+    expect(markup).not.toContain('id="portal-url"');
   });
 
   it("shows an empty situation state before analysis, with no fake controls", () => {
@@ -74,9 +75,45 @@ describe("Live personalization UX", () => {
     expect(markup).toContain("Start by analyzing the website.");
     expect(markup).not.toContain('class="personalization-placeholder"');
     expect(markup).not.toContain("<select");
-    expect(markup).not.toContain("<textarea");
+    expect(markup.match(/<textarea/gu)?.length).toBe(1);
     expect(markup).not.toContain("payment.status");
     expect(markup.match(/>Analyze Website<\/button>/gu)?.length).toBe(1);
+  });
+
+  it("clears prior live analysis and fact state as soon as the goal changes", async () => {
+    const analysis = await new FixtureDemoProvider().analyze({
+      goal: demoGoal,
+      portalUrl: demoSnapshot.rootUrl,
+      scenarioId: "dynamic-replanning",
+      userState: scheduledStandardState,
+    });
+    const liveAnalysis = { ...analysis, mode: "live_sonnet" as const };
+    const completed = applyAnalysisResult(
+      createModeWorkspaceState("live_sonnet"),
+      "live_sonnet",
+      liveAnalysis,
+      "analysis",
+    );
+
+    const changed = changeLiveGoal(completed, "What do I need for a recovery request?");
+
+    expect(changed.goal).toBe("What do I need for a recovery request?");
+    expect(changed.analysis).toBeNull();
+    expect(changed.originalAnalysis).toBeNull();
+    expect(changed.userState.facts).toEqual({});
+  });
+
+  it("keeps a recovered pending goal read-only until that exact request resumes", () => {
+    const markup = renderToStaticMarkup(
+      createElement(App, {
+        initialMode: "live_sonnet",
+        provider: resumableProvider("job"),
+      }),
+    );
+
+    expect(markup).toContain('<textarea id="user-goal"');
+    expect(markup).toContain("disabled");
+    expect(markup).toContain("Resume analysis");
   });
 
   it("shows a stable identifying state while Live extraction is loading", () => {

@@ -7,12 +7,32 @@ import { SiteSnapshotSchema } from "../contracts/snapshot.js";
 
 export const LIVE_EXTRACTION_START_ROUTE = "/api/live-extraction/jobs";
 export const LIVE_EXTRACTION_POLL_INTERVAL_MS = 1_000;
-export const LIVE_EXTRACTION_MAX_REQUEST_BODY_BYTES = 1_024;
+export const LIVE_EXTRACTION_MAX_REQUEST_BODY_BYTES = 8_192;
+export const LIVE_EXTRACTION_MAX_GOAL_CHARACTERS = 2_000;
+export const LIVE_EXTRACTION_MAX_GOAL_BYTES = 4_096;
 export const LIVE_EXTRACTION_JOB_TIMEOUT_MS = 180_000;
 export const LIVE_EXTRACTION_TERMINAL_RETENTION_MS = 15 * 60_000;
+export const LIVE_EXTRACTION_LEGACY_GOAL =
+  "I sent an $850 transfer to the wrong recipient. Can I cancel it? If not, what are my alternatives?";
 
 export const LiveExtractionJobIdSchema = z.string().regex(/^job_[a-f0-9]{32}$/u);
 export const LiveExtractionRequestIdSchema = z.string().regex(/^request_[a-f0-9]{32}$/u);
+export const LiveExtractionGoalSchema = z
+  .string()
+  .transform((goal) => goal.normalize("NFKC").trim())
+  .pipe(
+    z
+      .string()
+      .min(1)
+      .max(LIVE_EXTRACTION_MAX_GOAL_CHARACTERS)
+      .refine((goal) => !/[\p{Cc}\p{Cf}]/u.test(goal), {
+        message: "Goal must not contain Unicode control or format characters.",
+      })
+      .refine(
+        (goal) => new TextEncoder().encode(goal).byteLength <= LIVE_EXTRACTION_MAX_GOAL_BYTES,
+        { message: `Goal must not exceed ${LIVE_EXTRACTION_MAX_GOAL_BYTES} UTF-8 bytes.` },
+      ),
+  );
 export const LiveExtractionClientStopReasonSchema = z.enum([
   "user_cancelled",
   "navigation",
@@ -32,7 +52,7 @@ export const LiveSourceSelectionSummarySchema = z
   .object({
     sourceSnapshotId: IdSchema,
     sourceSnapshotHash: z.string().min(8),
-    userGoal: z.string().trim().min(1).max(2_000),
+    userGoal: LiveExtractionGoalSchema,
     selectionMode: z.literal("goal_scoped"),
     semanticCoverage: z.literal("not_verified"),
     coverage: z.literal("complete"),
@@ -96,7 +116,7 @@ export const LiveExtractionArtifactSchema = z
   .object({
     schemaVersion: z.literal(1),
     artifactKind: z.literal("live_sonnet_extraction"),
-    goal: z.string().trim().min(1).max(2_000),
+    goal: LiveExtractionGoalSchema,
     portalUrl: HttpUrlSchema,
     sourceSnapshot: SiteSnapshotSchema,
     procedureModel: ProcedureModelSchema,
@@ -225,13 +245,27 @@ export const LiveExtractionArtifactSchema = z
     }
   });
 
-export const LiveExtractionStartRequestSchema = z
+const LegacyLiveExtractionStartRequestSchema = z
   .object({
     schemaVersion: z.literal(1),
     action: z.literal("start_live_extraction"),
     requestId: LiveExtractionRequestIdSchema,
   })
   .strict();
+
+const GoalBoundLiveExtractionStartRequestSchema = z
+  .object({
+    schemaVersion: z.literal(2),
+    action: z.literal("start_live_extraction"),
+    requestId: LiveExtractionRequestIdSchema,
+    goal: LiveExtractionGoalSchema,
+  })
+  .strict();
+
+export const LiveExtractionStartRequestSchema = z.discriminatedUnion("schemaVersion", [
+  LegacyLiveExtractionStartRequestSchema,
+  GoalBoundLiveExtractionStartRequestSchema,
+]);
 
 const JobStatusPathSchema = z.string().regex(/^\/api\/live-extraction\/jobs\/job_[a-f0-9]{32}$/u);
 
@@ -256,6 +290,7 @@ export const LiveExtractionStartResponseSchema = z
 
 export const LiveExtractionFailureCodeSchema = z.enum([
   "REQUEST_INVALID",
+  "REQUEST_IDENTITY_MISMATCH",
   "REQUEST_TOO_LARGE",
   "UNSUPPORTED_ACTION",
   "UNSUPPORTED_MEDIA_TYPE",
@@ -369,6 +404,7 @@ export type LiveSourceSelectionSummary = z.infer<typeof LiveSourceSelectionSumma
 export type LiveSemanticAuditFinding = z.infer<typeof LiveSemanticAuditFindingSchema>;
 export type LiveSemanticAuditResult = z.infer<typeof LiveSemanticAuditResultSchema>;
 export type LiveExtractionArtifact = z.infer<typeof LiveExtractionArtifactSchema>;
+export type LiveExtractionGoal = z.infer<typeof LiveExtractionGoalSchema>;
 export type LiveExtractionClientStopReason = z.infer<
   typeof LiveExtractionClientStopReasonSchema
 >;

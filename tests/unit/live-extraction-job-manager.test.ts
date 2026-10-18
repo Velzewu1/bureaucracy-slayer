@@ -36,6 +36,40 @@ afterEach(() => {
 });
 
 describe("live extraction job manager", () => {
+  it("binds retained jobs and tombstones to the normalized goal and trusted portal", async () => {
+    const runner = vi.fn(() => Promise.resolve(liveExtractionArtifact()));
+    const manager = new LiveExtractionJobManager({
+      runner,
+      portalIdentity: "http://127.0.0.1:5180/dashboard",
+      createJobId: jobIdGenerator(),
+      terminalResultLimit: 1,
+    });
+    const goal = "Can I recover money from a completed transfer?";
+    const first = manager.start(REQUEST_1, `  ${goal}  `);
+    const duplicate = manager.start(REQUEST_1, goal);
+    const mismatch = manager.start(REQUEST_1, "What information is needed for recovery?");
+
+    expect(first.ok).toBe(true);
+    expect(duplicate).toMatchObject({
+      ok: true,
+      response: first.ok ? { jobId: first.response.jobId } : {},
+    });
+    expect(mismatch).toMatchObject({
+      ok: false,
+      failure: { code: "REQUEST_IDENTITY_MISMATCH", stage: "request" },
+    });
+    await flushMicrotasks();
+    expect(runner).toHaveBeenCalledWith(expect.objectContaining({ goal }));
+
+    const second = manager.start(REQUEST_2, goal);
+    expect(second.ok).toBe(true);
+    await flushMicrotasks();
+    expect(manager.start(REQUEST_1, "A different goal")).toMatchObject({
+      ok: false,
+      failure: { code: "REQUEST_IDENTITY_MISMATCH" },
+    });
+  });
+
   it("deduplicates request IDs and admits only one physical worker", async () => {
     const pending = deferred<ReturnType<typeof liveExtractionArtifact>>();
     const runner = vi.fn(() => pending.promise);

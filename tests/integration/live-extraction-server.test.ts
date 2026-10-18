@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  LIVE_EXTRACTION_MAX_REQUEST_BODY_BYTES,
   LiveExtractionErrorResponseSchema,
   LiveExtractionJobStatusSchema,
   LiveExtractionStartResponseSchema,
@@ -212,7 +213,13 @@ describe("live extraction loopback API", () => {
       "UNSUPPORTED_ACTION",
       "application/json",
     ],
-    ["oversized body", `"${"x".repeat(1_100)}"`, 413, "REQUEST_TOO_LARGE", "application/json"],
+    [
+      "oversized body",
+      `"${"x".repeat(LIVE_EXTRACTION_MAX_REQUEST_BODY_BYTES + 1)}"`,
+      413,
+      "REQUEST_TOO_LARGE",
+      "application/json",
+    ],
     [
       "wrong content type",
       startBody("request_11111111111111111111111111111111"),

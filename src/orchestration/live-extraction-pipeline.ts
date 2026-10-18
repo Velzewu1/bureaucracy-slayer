@@ -12,6 +12,7 @@ import {
   ClaudeTransportError,
   createAnthropicTransport,
   extractProcedure,
+  deriveObservedGoalScope,
   parseAnthropicMaxTokens,
   type AnthropicTransportOptions,
   type ClaudeTransport,
@@ -22,6 +23,7 @@ import {
 } from "../extractor/index.js";
 import {
   LIVE_EXTRACTION_JOB_TIMEOUT_MS,
+  LIVE_EXTRACTION_LEGACY_GOAL,
   LiveExtractionArtifactSchema,
   type LiveExtractionArtifact,
   type LiveExtractionFailure,
@@ -33,11 +35,15 @@ import {
   type LiveExtractionRunner,
 } from "./live-extraction-job-manager.js";
 
-export const LIVE_EXTRACTION_GOAL =
-  "I sent an $850 transfer to the wrong recipient. Can I cancel it? If not, what are my alternatives?";
+export const LIVE_EXTRACTION_GOAL = LIVE_EXTRACTION_LEGACY_GOAL;
 export const LIVE_EXTRACTION_API_HOST = "127.0.0.1";
 export const LIVE_EXTRACTION_API_PORT = 5_190;
 export const LIVE_EXTRACTION_UI_ORIGIN = "http://127.0.0.1:5173";
+export const LIVE_EXTRACTION_SOURCE_BUDGET = Object.freeze({
+  maxPages: 9,
+  maxBlocks: 80,
+  maxActions: 35,
+});
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -505,6 +511,32 @@ export function createLiveExtractionRunner(
 
   return async (context): Promise<LiveExtractionArtifact> => {
     const configured = configuration(environment, allowedPortalUrl);
+    context.setPhase("collecting");
+    let snapshot: SiteSnapshot;
+    try {
+      snapshot = await collect(collectorOptions(configured));
+    } catch (error) {
+      throw collectorFailure(error);
+    }
+
+    context.setPhase("selecting_sources");
+    const goalScope =
+      context.goal === LIVE_EXTRACTION_LEGACY_GOAL
+        ? {
+            primaryActionPurpose: "cancel the transfer",
+            alternativeActionPurposes: ["request recovery"],
+          }
+        : deriveObservedGoalScope(snapshot, context.goal);
+    if (goalScope === undefined) {
+      throw pipelineFailure({
+        code: "SOURCE_SELECTION_INCOMPLETE",
+        stage: "source_selection",
+        message: "No observed website action was sufficiently grounded in the requested goal.",
+        retryable: false,
+        issueCodes: ["NO_GROUNDED_WEBSITE_ACTION"],
+      });
+    }
+
     let transport: ClaudeTransport;
     try {
       transport = await createTransport({
@@ -523,24 +555,13 @@ export function createLiveExtractionRunner(
       });
     }
 
-    context.setPhase("collecting");
-    let snapshot: SiteSnapshot;
-    try {
-      snapshot = await collect(collectorOptions(configured));
-    } catch (error) {
-      throw collectorFailure(error);
-    }
-
-    context.setPhase("selecting_sources");
-    const extraction = await extract(snapshot, LIVE_EXTRACTION_GOAL, {
+    const extraction = await extract(snapshot, context.goal, {
       transport: deadlineBoundTransport(transport, context, now),
       model: configured.model,
       maxTokens: configured.maxTokens,
       maxTransientRetries: 0,
-      goalScope: {
-        primaryActionPurpose: "cancel the transfer",
-        alternativeActionPurposes: ["request recovery"],
-      },
+      sourceSelectionBudget: LIVE_EXTRACTION_SOURCE_BUDGET,
+      goalScope,
       evidenceContext: {
         evidenceResultId: createEvidenceResultId(),
         checkedAt: now().toISOString(),
@@ -555,7 +576,7 @@ export function createLiveExtractionRunner(
     return LiveExtractionArtifactSchema.parse({
       schemaVersion: 1,
       artifactKind: "live_sonnet_extraction",
-      goal: LIVE_EXTRACTION_GOAL,
+      goal: context.goal,
       portalUrl: configured.portalUrl,
       sourceSnapshot: snapshot,
       procedureModel: extraction.model,

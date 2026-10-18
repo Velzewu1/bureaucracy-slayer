@@ -70,7 +70,7 @@ function liveArtifact() {
 }
 
 describe("live extraction API contract", () => {
-  it("accepts only the fixed, idempotent start command", () => {
+  it("preserves the strict legacy start command and accepts normalized v2 goals", () => {
     expect(
       LiveExtractionStartRequestSchema.parse({
         schemaVersion: 1,
@@ -81,6 +81,20 @@ describe("live extraction API contract", () => {
       schemaVersion: 1,
       action: "start_live_extraction",
       requestId: "request_1234567890abcdef1234567890abcdef",
+    });
+
+    expect(
+      LiveExtractionStartRequestSchema.parse({
+        schemaVersion: 2,
+        action: "start_live_extraction",
+        requestId: "request_1234567890abcdef1234567890abcdef",
+        goal: "  Can I recover a completed transfer?  ",
+      }),
+    ).toEqual({
+      schemaVersion: 2,
+      action: "start_live_extraction",
+      requestId: "request_1234567890abcdef1234567890abcdef",
+      goal: "Can I recover a completed transfer?",
     });
 
     expect(
@@ -98,6 +112,26 @@ describe("live extraction API contract", () => {
         requestId: "request_1234567890abcdef1234567890abcdef",
       }).success,
     ).toBe(false);
+  });
+
+  it("rejects unsafe or oversized goals and all caller-controlled portal fields", () => {
+    const base = {
+      schemaVersion: 2,
+      action: "start_live_extraction",
+      requestId: "request_1234567890abcdef1234567890abcdef",
+    } as const;
+
+    expect(LiveExtractionStartRequestSchema.safeParse({ ...base, goal: "\u200bhidden" }).success)
+      .toBe(false);
+    expect(LiveExtractionStartRequestSchema.safeParse({ ...base, goal: "line\nbreak" }).success)
+      .toBe(false);
+    expect(LiveExtractionStartRequestSchema.safeParse({ ...base, goal: "界".repeat(1_500) }).success)
+      .toBe(false);
+    expect(LiveExtractionStartRequestSchema.safeParse({
+      ...base,
+      goal: "Cancel my transfer",
+      portalUrl: "https://attacker.example/",
+    }).success).toBe(false);
   });
 
   it("binds the accepted status URL to its job id", () => {

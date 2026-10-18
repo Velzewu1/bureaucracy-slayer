@@ -263,6 +263,55 @@ function tokenOverlap(value: string, goalTokens: ReadonlySet<string>): number {
   return count;
 }
 
+/**
+ * Derives a narrow retrieval intent only from labels of actions observed in
+ * the trusted snapshot. The user goal can rank those labels, but cannot
+ * introduce an action purpose that the collector did not observe.
+ */
+export function deriveObservedGoalScope(
+  snapshot: SiteSnapshot,
+  userGoal: string,
+): GoalScopedExtraction | undefined {
+  const goalTokens = normalizedTokens(userGoal);
+  if (goalTokens.size === 0) return undefined;
+
+  const candidates = snapshot.pages.flatMap((page) =>
+    page.actions
+      .filter((action) => {
+        const length = action.label.trim().length;
+        return action.visible && length > 0 && length <= 200;
+      })
+      .map((action) => {
+        const overlap = tokenOverlap(action.label, goalTokens);
+        const actionTokens = normalizedTokens(action.label);
+        return {
+          action,
+          overlap,
+          specificity: actionTokens.size,
+          coverage: actionTokens.size === 0 ? 0 : overlap / actionTokens.size,
+          operational: action.kind === "link" ? 0 : 1,
+          enabled: action.enabled ? 1 : 0,
+        };
+      })
+      .filter((candidate) => candidate.overlap > 0),
+  );
+
+  candidates.sort(
+    (left, right) =>
+      right.coverage - left.coverage ||
+      right.overlap - left.overlap ||
+      right.operational - left.operational ||
+      right.specificity - left.specificity ||
+      right.enabled - left.enabled ||
+      left.action.label.localeCompare(right.action.label) ||
+      left.action.id.localeCompare(right.action.id),
+  );
+  const best = candidates[0];
+  return best === undefined
+    ? undefined
+    : { primaryActionPurpose: best.action.label };
+}
+
 function pageTargetIndex(snapshot: SiteSnapshot): ReadonlyMap<string, number> {
   const result = new Map<string, number>();
   snapshot.pages.forEach((page, index) => {

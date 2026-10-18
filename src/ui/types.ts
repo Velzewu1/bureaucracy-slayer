@@ -91,4 +91,5 @@ export interface DemoDataProvider {
   stop?(reason: LiveExtractionClientStopReason): void;
   canResume?(): boolean;
   resumeState?(): LiveResumeState;
+  recoveryGoal?(): string | undefined;
 }

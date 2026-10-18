@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   LIVE_EXTRACTION_MAX_REQUEST_BODY_BYTES,
+  LIVE_EXTRACTION_LEGACY_GOAL,
   LIVE_EXTRACTION_POLL_INTERVAL_MS,
   LIVE_EXTRACTION_START_ROUTE,
   LiveExtractionErrorResponseSchema,
@@ -136,7 +137,10 @@ async function handleStart(
     sendError(
       response,
       413,
-      requestFailure("REQUEST_TOO_LARGE", "The request body exceeds 1,024 bytes."),
+      requestFailure(
+        "REQUEST_TOO_LARGE",
+        `The request body exceeds ${LIVE_EXTRACTION_MAX_REQUEST_BODY_BYTES.toLocaleString("en-US")} bytes.`,
+      ),
     );
     return;
   }
@@ -168,7 +172,9 @@ async function handleStart(
     return;
   }
 
-  const outcome = manager.start(parsed.data.requestId);
+  const goal =
+    parsed.data.schemaVersion === 1 ? LIVE_EXTRACTION_LEGACY_GOAL : parsed.data.goal;
+  const outcome = manager.start(parsed.data.requestId, goal);
   if (!outcome.ok) {
     sendError(response, 409, outcome.failure);
     return;
@@ -344,6 +350,7 @@ export function createDefaultLiveExtractionJobManager(
   const environment = process.env;
   return new LiveExtractionJobManager({
     ...options,
+    portalIdentity: environment["COLLECTOR_TEST_URL"] ?? "",
     runner: createLiveExtractionRunner({
       environment,
       allowedPortalUrl: environment["COLLECTOR_TEST_URL"] ?? "",

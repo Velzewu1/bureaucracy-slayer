@@ -1,16 +1,20 @@
 type AnalysisSetupProps = Readonly<{
   goal: string;
   portalUrl: string;
+  goalEditable: boolean;
   isBusy: boolean;
   hasAnalysis: boolean;
+  onGoalChange(goal: string): void;
   goalNote: string;
 }>;
 
 export function AnalysisSetup({
   goal,
   portalUrl,
+  goalEditable,
   isBusy,
   hasAnalysis,
+  onGoalChange,
   goalNote,
 }: AnalysisSetupProps) {
   return (
@@ -29,17 +33,27 @@ export function AnalysisSetup({
       </div>
 
       <div className="locked-context__heading">
-        <span className="field-label" id="locked-goal-label">Your goal</span>
-        <span className="locked-context__badge">Locked demo goal</span>
+        <label className="field-label" htmlFor="user-goal">Your goal</label>
+        <span className="locked-context__badge">
+          {goalEditable ? "Editable goal" : "Recorded goal"}
+        </span>
       </div>
-      <p
-        aria-labelledby="locked-goal-label"
-        className="goal-context"
-        data-testid="locked-goal"
-      >
-        {goal}
-      </p>
-      <p className="field-note">{goalNote}</p>
+      {goalEditable ? (
+        <textarea
+          id="user-goal"
+          className="goal-input"
+          value={goal}
+          maxLength={2_000}
+          disabled={isBusy}
+          aria-describedby="goal-note"
+          onChange={(event) => onGoalChange(event.currentTarget.value)}
+        />
+      ) : (
+        <p id="user-goal" className="goal-context" data-testid="recorded-goal">
+          {goal}
+        </p>
+      )}
+      <p className="field-note" id="goal-note">{goalNote}</p>
 
       <div className="portal-field">
         <div>

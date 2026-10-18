@@ -114,7 +114,7 @@ function canonicalDemoArtifacts(): Readonly<{
   return { snapshot: snapshotInput, model: modelInput };
 }
 
-function demoLiveArtifact(): LiveExtractionArtifact {
+function demoLiveArtifact(goal = LIVE_DEMO_GOAL): LiveExtractionArtifact {
   const { snapshot, model } = canonicalDemoArtifacts();
   const semanticAudit = auditSemanticQualifiers(snapshot, model);
   const validation = validateEvidence(
@@ -138,7 +138,7 @@ function demoLiveArtifact(): LiveExtractionArtifact {
   return LiveExtractionArtifactSchema.parse({
     schemaVersion: 1,
     artifactKind: "live_sonnet_extraction",
-    goal: LIVE_DEMO_GOAL,
+    goal,
     portalUrl: LIVE_DEMO_PORTAL_URL,
     sourceSnapshot: snapshot,
     procedureModel: model,
@@ -146,7 +146,7 @@ function demoLiveArtifact(): LiveExtractionArtifact {
     sourceSelection: {
       sourceSnapshotId: snapshot.id,
       sourceSnapshotHash: snapshot.contentHash,
-      userGoal: LIVE_DEMO_GOAL,
+      userGoal: goal,
       selectionMode: "goal_scoped",
       semanticCoverage: "not_verified",
       coverage: "complete",
@@ -456,6 +456,67 @@ describe("LiveExtractionProvider", () => {
       },
     });
     expect(analysis.plan.steps.every((step) => step.autoExecutable === false)).toBe(true);
+  });
+
+  it("submits the exact normalized v2 goal and binds recovery to it", async () => {
+    const goal = "Can I request recovery for a completed transfer?";
+    const storage = memoryStorage();
+    const responses = [
+      jsonResponse(startResponse(), 202),
+      jsonResponse(succeeded(demoLiveArtifact(goal))),
+    ];
+    const posted: unknown[] = [];
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        if (typeof init.body !== "string") throw new Error("POST body is unavailable");
+        posted.push(JSON.parse(init.body));
+      }
+      const response = responses.shift();
+      if (response === undefined) throw new Error("Unexpected test fetch");
+      return response;
+    });
+    const provider = new LiveExtractionProvider({
+      fetch,
+      generateRequestId: () => requestId,
+      storage,
+      wait: async () => {},
+    });
+
+    await expect(provider.analyze({ ...request(), goal: `  ${goal}  ` }))
+      .resolves.toMatchObject({ goal });
+    expect(posted).toEqual([{
+      schemaVersion: 2,
+      action: "start_live_extraction",
+      requestId,
+      goal,
+    }]);
+    expect(storage.value()).toBeNull();
+  });
+
+  it("never reuses an in-flight or recovered request for another goal", async () => {
+    const goal = "Can I request recovery for a completed transfer?";
+    const storage = memoryStorage(JSON.stringify({
+      schemaVersion: 2,
+      kind: "request",
+      requestId,
+      goal,
+      createdAtMs: fixedNowMs(),
+    }));
+    const fetch = vi.fn(async () => jsonResponse(startResponse(), 202));
+    const provider = new LiveExtractionProvider({
+      fetch,
+      storage,
+      nowMs: fixedNowMs,
+      wait: async () => {},
+    });
+
+    expect(provider.recoveryGoal()).toBe(goal);
+    await expect(provider.analyze({
+      ...request(),
+      goal: "What information is needed for a recovery request?",
+    })).rejects.toMatchObject({ code: "GOAL_MISMATCH" });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(storage.value()).not.toBeNull();
   });
 
   it("deduplicates simultaneous submissions into one paid job", async () => {

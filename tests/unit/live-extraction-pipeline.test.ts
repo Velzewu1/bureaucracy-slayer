@@ -35,7 +35,7 @@ const transport: ClaudeTransport = {
 };
 
 describe("live extraction composition", () => {
-  it("uses only the fixed portal, goal, scope, collector bounds, and zero retries", async () => {
+  it("preserves the legacy goal scope, fixed portal, bounded catalog, and zero retries", async () => {
     const fixture = liveExtractionArtifact();
     const collect = vi.fn(() => Promise.resolve(fixture.sourceSnapshot));
     const createTransport = vi.fn(() => Promise.resolve(transport));
@@ -89,6 +89,7 @@ describe("live extraction composition", () => {
 
     const result = await runner({
       deadlineAtMs: Date.now() + 180_000,
+      goal: LIVE_EXTRACTION_GOAL,
       setPhase: (phase) => phases.push(phase),
     });
 
@@ -118,6 +119,7 @@ describe("live extraction composition", () => {
         model: ENVIRONMENT.ANTHROPIC_MODEL,
         maxTokens: 16_000,
         maxTransientRetries: 0,
+        sourceSelectionBudget: { maxPages: 9, maxBlocks: 80, maxActions: 35 },
         goalScope: {
           primaryActionPurpose: "cancel the transfer",
           alternativeActionPurposes: ["request recovery"],
@@ -290,6 +292,7 @@ describe("live extraction composition", () => {
       try {
         await runner({
           deadlineAtMs: Date.now() + 180_000,
+          goal: LIVE_EXTRACTION_GOAL,
           setPhase: () => undefined,
         });
       } catch (error) {
@@ -373,7 +376,11 @@ describe("live extraction composition", () => {
       });
       let caught: unknown;
       try {
-        await runner({ deadlineAtMs: Date.now() + 180_000, setPhase: () => undefined });
+        await runner({
+          deadlineAtMs: Date.now() + 180_000,
+          goal: LIVE_EXTRACTION_GOAL,
+          setPhase: () => undefined,
+        });
       } catch (error) {
         caught = error;
       }
@@ -408,7 +415,11 @@ describe("live extraction composition", () => {
     });
     let caught: unknown;
     try {
-      await runner({ deadlineAtMs: Date.now() + 180_000, setPhase: () => undefined });
+      await runner({
+        deadlineAtMs: Date.now() + 180_000,
+        goal: LIVE_EXTRACTION_GOAL,
+        setPhase: () => undefined,
+      });
     } catch (error) {
       caught = error;
     }
@@ -456,6 +467,7 @@ describe("live extraction composition", () => {
     try {
       await runner({
         deadlineAtMs: Date.now() + 180_000,
+        goal: LIVE_EXTRACTION_GOAL,
         setPhase: () => undefined,
       });
     } catch (error) {
@@ -495,6 +507,7 @@ describe("live extraction composition", () => {
 
     await expect(runner({
       deadlineAtMs: Date.now() + 180_000,
+      goal: LIVE_EXTRACTION_GOAL,
       setPhase: () => undefined,
     })).rejects.toMatchObject({
       failure: { code: "CONFIGURATION_INVALID" },
@@ -527,6 +540,7 @@ describe("live extraction composition", () => {
 
     await expect(runner({
       deadlineAtMs: Date.now() + 180_000,
+      goal: LIVE_EXTRACTION_GOAL,
       setPhase: () => undefined,
     })).resolves.toMatchObject({ portalUrl: LIVE_EXTRACTION_TEST_PORTAL_URL });
     expect(collect).toHaveBeenCalledTimes(1);
@@ -579,6 +593,7 @@ describe("live extraction composition", () => {
 
     await runner({
       deadlineAtMs: startedAtMs + 180_000,
+      goal: LIVE_EXTRACTION_GOAL,
       setPhase: () => undefined,
     });
 
@@ -586,5 +601,74 @@ describe("live extraction composition", () => {
       { timeoutMs: 180_000 },
       { timeoutMs: 60_000 },
     ]);
+    });
   });
-});
+
+  it("passes a new normalized goal with an observed-action-derived bounded scope", async () => {
+    const fixture = liveExtractionArtifact();
+    const goal = "Please request a recovery review.";
+    const extract = vi.fn((_snapshot: unknown, receivedGoal: unknown, options: ExtractProcedureOptions) =>
+      Promise.resolve({
+        ok: true as const,
+        status: "review_required" as const,
+        model: fixture.procedureModel,
+        evidence: fixture.evidence,
+        attempts: 2,
+        sourceSelection: selectFocusedSources(
+          fixture.sourceSnapshot,
+          String(receivedGoal),
+          options.sourceSelectionBudget,
+          options.goalScope,
+        ),
+      }),
+    );
+    const runner = createLiveExtractionRunner({
+      environment: ENVIRONMENT,
+      allowedPortalUrl: LIVE_EXTRACTION_TEST_PORTAL_URL,
+      collect: () => Promise.resolve(fixture.sourceSnapshot),
+      createTransport: () => Promise.resolve(transport),
+      extract,
+    });
+
+    const result = await runner({
+      deadlineAtMs: Date.now() + 180_000,
+      goal,
+      setPhase: () => undefined,
+    });
+
+    expect(extract).toHaveBeenCalledWith(
+      fixture.sourceSnapshot,
+      goal,
+      expect.objectContaining({
+        sourceSelectionBudget: { maxPages: 9, maxBlocks: 80, maxActions: 35 },
+        goalScope: { primaryActionPurpose: "Request recovery review" },
+      }),
+    );
+    expect(result.goal).toBe(goal);
+  });
+
+  it("fails an unsupported goal before creating or invoking model transport", async () => {
+    const fixture = liveExtractionArtifact();
+    const createTransport = vi.fn(() => Promise.resolve(transport));
+    const extract = vi.fn();
+    const runner = createLiveExtractionRunner({
+      environment: ENVIRONMENT,
+      allowedPortalUrl: LIVE_EXTRACTION_TEST_PORTAL_URL,
+      collect: () => Promise.resolve(fixture.sourceSnapshot),
+      createTransport,
+      extract,
+    });
+
+    await expect(runner({
+      deadlineAtMs: Date.now() + 180_000,
+      goal: "How do I close my mortgage?",
+      setPhase: () => undefined,
+    })).rejects.toMatchObject({
+      failure: {
+        code: "SOURCE_SELECTION_INCOMPLETE",
+        issueCodes: ["NO_GROUNDED_WEBSITE_ACTION"],
+      },
+    });
+    expect(createTransport).not.toHaveBeenCalled();
+    expect(extract).not.toHaveBeenCalled();
+  });
