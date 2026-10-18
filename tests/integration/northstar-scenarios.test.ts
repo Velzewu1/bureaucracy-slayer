@@ -7,6 +7,7 @@ import {
   LIVE_DEMO_CANCELLATION_GOAL,
   LIVE_DEMO_MISTAKEN_RECOVERY_GOAL,
   LIVE_TEST_UNAUTHORIZED_GOAL,
+  NORTHSTAR_A2_COMPLETED_RECOVERY_GOAL,
   createGoalSpecificLiveArtifactFixture,
 } from "./live-extraction/contract-fixtures.js";
 
@@ -75,6 +76,21 @@ describe("Northstar grounded scenarios", () => {
     expect(result.plan.steps.map((step) => step.procedureActionId)).not.toContain("proc_cancel_transfer");
     expect(result.plan.status).not.toBe("ready");
     expect(result.artifact.procedureModel.id).toBe("procedure_fixture_completed_recovery");
+  });
+
+  it("grounds the exact completed-recovery goal without converting a hedged permit into a ready route", () => {
+    const result = decide(NORTHSTAR_A2_COMPLETED_RECOVERY_GOAL, facts({
+      transfer_status: "completed",
+      initiated_by_user: true,
+      transfer_type: "scheduled",
+    }));
+
+    expect(result.artifact.sourceSelection.coverage).toBe("complete");
+    expect(result.artifact.sourceSelection.selectedCounts.pages).toBeLessThanOrEqual(9);
+    expect(result.artifact.sourceSelection.selectedCounts.blocks).toBeLessThanOrEqual(80);
+    expect(result.artifact.provenance.modelName).toBe("deterministic-offline-test-fixture");
+    expect(decision(result, "proc_cancel_transfer")?.reasonCodes).toContain("PROHIBITED");
+    expect(result.plan.status).not.toBe("ready");
   });
 
   it("keeps an unauthorized transfer distinct from a mistaken-transfer report", () => {

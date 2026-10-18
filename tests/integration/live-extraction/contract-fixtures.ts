@@ -31,6 +31,8 @@ export const LIVE_TEST_RECOVERY_GOAL =
   "Can I request recovery for a completed transfer?";
 export const LIVE_DEMO_MISTAKEN_RECOVERY_GOAL =
   "I completed a transfer to the wrong recipient. How can I request recovery?";
+export const NORTHSTAR_A2_COMPLETED_RECOVERY_GOAL =
+  "I sent a completed transfer to the wrong recipient. How can I recover it?";
 export const LIVE_TEST_RECOVERY_PREREQUISITES_GOAL =
   "What information do I need to submit a recovery request?";
 export const LIVE_TEST_UNAUTHORIZED_GOAL =
@@ -379,7 +381,8 @@ function deterministicModelForGoal(goal: string) {
   if (
     goal === LIVE_TEST_RECOVERY_GOAL ||
     goal === LIVE_TEST_RECOVERY_PREREQUISITES_GOAL ||
-    goal === LIVE_DEMO_MISTAKEN_RECOVERY_GOAL
+    goal === LIVE_DEMO_MISTAKEN_RECOVERY_GOAL ||
+    goal === NORTHSTAR_A2_COMPLETED_RECOVERY_GOAL
   ) {
     const keepActions = new Set([
       "proc_cancel_transfer",
