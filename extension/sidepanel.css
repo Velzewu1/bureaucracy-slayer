@@ -1,0 +1,40 @@
+/* Scoped to the extension's own side-panel document; never injected into pages. */
+:root { color-scheme: light; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+body { margin: 0; background: #f6f7f9; color: #14213d; font-size: 14px; line-height: 1.45; }
+#slayer-panel { padding: 12px; display: grid; gap: 12px; }
+.banner { background: #fff3cd; border: 1px solid #e0b84a; border-radius: 6px; padding: 8px 10px; font-size: 12px; }
+.card { background: #fff; border: 1px solid #d5d9e0; border-radius: 8px; padding: 12px; }
+.status { display: inline-block; font-weight: 700; padding: 3px 10px; border-radius: 999px; font-size: 12px; }
+.status.ready { background: #d7f5dd; color: #11582a; }
+.status.needs_information { background: #dbe9ff; color: #164a9c; }
+.status.blocked { background: #fddcdc; color: #8a1c1c; }
+.status.review_required { background: #ffe6bf; color: #7a4a00; }
+.status.none, .status.rejected, .status.expired, .status.invalidated, .status.superseded, .status.stale {
+  background: #e6e8ec; color: #3b4252;
+}
+h1 { font-size: 16px; margin: 0 0 6px; }
+h2 { font-size: 14px; margin: 0 0 6px; }
+.goal { color: #44506a; margin: 6px 0; }
+.warning { border-left: 4px solid #c2410c; background: #fff1e6; padding: 8px 10px; border-radius: 4px; margin-top: 8px; }
+.guidance-only { font-size: 12px; color: #44506a; margin-top: 8px; }
+ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.step { border: 1px solid #d5d9e0; border-radius: 8px; padding: 10px; background: #fff; }
+.step.next { border-color: #1d4ed8; box-shadow: 0 0 0 2px #dbe9ff; }
+.step.done { opacity: 0.6; }
+.step-head { display: flex; gap: 8px; align-items: baseline; font-weight: 600; }
+.tag { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: #e6e8ec; }
+.tag.manual { background: #ffe6bf; color: #7a4a00; }
+.tag.navigate { background: #dbe9ff; color: #164a9c; }
+.next-label { font-size: 11px; font-weight: 700; color: #1d4ed8; text-transform: uppercase; }
+.manual-note { font-size: 12px; color: #7a4a00; margin-top: 4px; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+button { font: inherit; padding: 5px 10px; border-radius: 6px; border: 1px solid #1d4ed8; background: #1d4ed8; color: #fff; cursor: pointer; }
+button.secondary { background: #fff; color: #1d4ed8; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+details { margin-top: 6px; font-size: 12px; }
+blockquote { margin: 6px 0 0; padding: 4px 8px; border-left: 3px solid #b6bfd0; color: #33415c; }
+.feedback { font-size: 12px; margin-top: 6px; color: #164a9c; }
+.feedback.warn { color: #8a1c1c; font-weight: 600; }
+.demo { border: 1px dashed #8a93a6; border-radius: 8px; padding: 10px; font-size: 12px; }
+.demo select { max-width: 100%; margin: 4px 0; }
+.demo .actions button { font-size: 12px; }

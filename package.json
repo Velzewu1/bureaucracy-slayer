@@ -23,6 +23,9 @@
     "dev:ui": "vite --config vite.ui.config.ts --configLoader runner",
     "build:ui": "npm run build:recorded && vite build --config vite.ui.config.ts --configLoader runner",
     "preview:ui": "vite preview --config vite.ui.config.ts --configLoader runner",
+    "build:extension": "node --require ./scripts/tsx-windows-user-shim.cjs --import tsx ./extension/scripts/build.ts",
+    "test:extension": "vitest run tests/extension --configLoader runner",
+    "verify:extension": "node --require ./scripts/tsx-windows-user-shim.cjs --import tsx ./extension/scripts/verify-real-browser.ts",
     "test:ui": "vitest run tests/ui --configLoader runner",
     "test:live-integration": "vitest run tests/integration/live-extraction-api-security.test.ts tests/integration/live-extraction-premerge.test.ts tests/integration/live-extraction-server.test.ts --configLoader runner"
   },

@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Bureaucracy Slayer Guide (Northstar demo)",
+  "version": "0.1.0",
+  "description": "Guidance-only companion that helps you follow a verified Bureaucracy Slayer route on the Northstar Mock Bank. It never clicks or submits anything.",
+  "minimum_chrome_version": "116",
+  "permissions": ["sidePanel", "storage"],
+  "host_permissions": ["http://127.0.0.1:5180/*"],
+  "background": { "service_worker": "background.js" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "action": { "default_title": "Open Bureaucracy Slayer guide" },
+  "content_scripts": [
+    {
+      "matches": ["http://127.0.0.1:5180/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; connect-src 'none'"
+  }
+}
