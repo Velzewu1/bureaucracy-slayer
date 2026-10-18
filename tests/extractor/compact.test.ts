@@ -66,16 +66,19 @@ describe("compact extraction conversion", () => {
     );
   });
 
-  it("rejects an observed WebsiteAction that no browser procedure action represents", () => {
+  it("preserves a citation-only informational WebsiteAction without fabricating a procedure action", () => {
     const dto = freshDto();
     actionById(dto, "proc_open001").websiteActionId = "action_cancel01";
+    const originalActionCount = dto.actions.length;
 
     const outcome = convertCompactExtraction(dto, snapshot);
-    expect(outcome).toMatchObject({ ok: false, stage: "conversion" });
-    if (outcome.ok) return;
-    expect(outcome.issues).toContain(
-      "Rule rule_openpermit1 citation WebsiteAction action_open001 is not represented by a declared browser procedure action.",
-    );
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.model.rules.find((rule) => rule.id === "rule_openpermit1")?.citations[0]?.actionIds)
+      .toEqual(["action_open001"]);
+    expect(outcome.model.actions).toHaveLength(originalActionCount);
+    expect(outcome.model.actions.some((action) => action.websiteActionId === "action_open001"))
+      .toBe(false);
   });
 
   it("rejects an observed WebsiteAction from a different page than the citation", () => {

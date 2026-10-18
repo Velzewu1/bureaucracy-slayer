@@ -217,7 +217,7 @@ type IntentProfile = Readonly<{
 const STOP_WORDS = new Set([
   "a", "an", "and", "are", "can", "determine", "do", "for", "from", "how", "i", "identify",
   "if", "in", "is", "it", "my", "of", "on", "or", "the", "this", "to", "was", "whether",
-  "with", "wrong",
+  "will", "with", "wrong",
 ]);
 
 // These are generic policy-document signals, not domain policy. They influence
@@ -239,6 +239,30 @@ function canonicalToken(token: string): string {
   return token;
 }
 
+function tokenVariants(token: string): readonly string[] {
+  const variants = new Set<string>();
+  const add = (value: string) => {
+    const canonical = canonicalToken(value);
+    if (canonical.length >= 3) variants.add(canonical);
+  };
+  add(token);
+  if (token.endsWith("ly") && token.length > 8) add(token.slice(0, -2));
+  if (token.startsWith("un") && token.length >= 8) add(token.slice(2));
+  return [...variants];
+}
+
+function tokensRelated(left: string, right: string): boolean {
+  for (const leftToken of tokenVariants(left)) {
+    for (const rightToken of tokenVariants(right)) {
+      if (leftToken === rightToken) return true;
+      const shorter = leftToken.length <= rightToken.length ? leftToken : rightToken;
+      const longer = leftToken.length <= rightToken.length ? rightToken : leftToken;
+      if (shorter.length >= 5 && longer.startsWith(shorter)) return true;
+    }
+  }
+  return false;
+}
+
 function normalizedTokens(value: string): ReadonlySet<string> {
   return new Set(
     value
@@ -253,14 +277,125 @@ function normalizedTokens(value: string): ReadonlySet<string> {
 function tokenOverlap(value: string, goalTokens: ReadonlySet<string>): number {
   let count = 0;
   for (const token of normalizedTokens(value)) {
-    if ([...goalTokens].some((goalToken) => {
-      if (token === goalToken) return true;
-      const shorter = token.length <= goalToken.length ? token : goalToken;
-      const longer = token.length <= goalToken.length ? goalToken : token;
-      return shorter.length >= 5 && longer.startsWith(shorter);
-    })) count += 1;
+    if ([...goalTokens].some((goalToken) => tokensRelated(token, goalToken))) count += 1;
   }
   return count;
+}
+
+function commonTitleTokens(snapshot: SiteSnapshot): ReadonlySet<string> {
+  const frequencies = new Map<string, number>();
+  for (const page of snapshot.pages) {
+    for (const token of normalizedTokens(page.title)) {
+      frequencies.set(token, (frequencies.get(token) ?? 0) + 1);
+    }
+  }
+  const threshold = Math.ceil(snapshot.pages.length * 0.7);
+  return new Set(
+    [...frequencies].filter(([, count]) => count >= threshold).map(([token]) => token),
+  );
+}
+
+function repeatedNavigationLabels(snapshot: SiteSnapshot): ReadonlySet<string> {
+  const counts = new Map<string, number>();
+  for (const page of snapshot.pages) {
+    const seen = new Set<string>();
+    for (const action of page.actions) {
+      if (seen.has(action.label)) continue;
+      seen.add(action.label);
+      counts.set(action.label, (counts.get(action.label) ?? 0) + 1);
+    }
+  }
+  const threshold = Math.max(3, Math.ceil(snapshot.pages.length * 0.5));
+  return new Set(
+    [...counts].filter(([, count]) => count >= threshold).map(([label]) => label),
+  );
+}
+
+function createPurposeCandidateFilter(snapshot: SiteSnapshot) {
+  const titleChrome = commonTitleTokens(snapshot);
+  const repeatedLabels = repeatedNavigationLabels(snapshot);
+  return (action: SiteSnapshot["pages"][number]["actions"][number]): boolean => {
+    if (!action.visible || action.kind === "form_control") return false;
+    const length = action.label.trim().length;
+    if (length === 0 || length > 200) return false;
+    if (repeatedLabels.has(action.label)) return false;
+    const tokens = normalizedTokens(action.label);
+    return tokens.size > 0 && ![...tokens].every((token) => titleChrome.has(token));
+  };
+}
+
+function actionDocumentFrequency(
+  snapshot: SiteSnapshot,
+  token: string,
+  isCandidate: (action: SiteSnapshot["pages"][number]["actions"][number]) => boolean,
+): number {
+  let count = 0;
+  for (const page of snapshot.pages) {
+    for (const action of page.actions) {
+      if (!isCandidate(action)) continue;
+      if (tokenOverlap(action.label, new Set([token])) > 0) count += 1;
+    }
+  }
+  return count;
+}
+
+function distinctiveOverlap(
+  value: string,
+  goalTokens: ReadonlySet<string>,
+  frequencies: ReadonlyMap<string, number>,
+  genericAt: number,
+): number {
+  let count = 0;
+  for (const goalToken of goalTokens) {
+    if ((frequencies.get(goalToken) ?? 0) > genericAt) continue;
+    if (tokenOverlap(value, new Set([goalToken])) > 0) count += 1;
+  }
+  return count;
+}
+
+function weightedTokenOverlap(
+  value: string,
+  tokens: ReadonlySet<string>,
+  tokenWeight: (token: string) => number = () => 1,
+): number {
+  let score = 0;
+  const observed = normalizedTokens(value);
+  for (const token of tokens) {
+    let matches = 0;
+    for (const observedToken of observed) {
+      if (tokensRelated(observedToken, token)) matches += 1;
+    }
+    if (matches > 0) score += matches * tokenWeight(token);
+  }
+  return score;
+}
+
+function distinctiveTokenSet(
+  tokens: ReadonlySet<string>,
+  frequencies: ReadonlyMap<string, number>,
+  genericAt: number,
+): ReadonlySet<string> {
+  return new Set([...tokens].filter((token) => (frequencies.get(token) ?? 0) <= genericAt));
+}
+
+function actionContextText(
+  page: SiteSnapshot["pages"][number],
+  action: SiteSnapshot["pages"][number]["actions"][number],
+): string {
+  const labelTokens = normalizedTokens(action.label);
+  const matched = new Set<number>();
+  page.blocks.forEach((block, index) => {
+    if (tokenOverlap(block.text, labelTokens) > 0) matched.add(index);
+  });
+  if (matched.size === 0) return `${page.title} ${page.url} ${action.label}`;
+  const texts = [page.title, action.label];
+  for (const index of matched) {
+    for (let candidate = index - 1; candidate <= index + 1; candidate += 1) {
+      const block = page.blocks[candidate];
+      if (block !== undefined) texts.push(block.text);
+    }
+  }
+  return texts.join(" ");
 }
 
 /**
@@ -268,48 +403,222 @@ function tokenOverlap(value: string, goalTokens: ReadonlySet<string>): number {
  * the trusted snapshot. The user goal can rank those labels, but cannot
  * introduce an action purpose that the collector did not observe.
  */
-export function deriveObservedGoalScope(
+function deriveObservedGoalScopeCandidate(
   snapshot: SiteSnapshot,
   userGoal: string,
 ): GoalScopedExtraction | undefined {
   const goalTokens = normalizedTokens(userGoal);
   if (goalTokens.size === 0) return undefined;
+  const isCandidate = createPurposeCandidateFilter(snapshot);
+
+  const frequencies = new Map<string, number>();
+  let candidateCount = 0;
+  for (const page of snapshot.pages) {
+    for (const action of page.actions) {
+      if (!isCandidate(action)) continue;
+      candidateCount += 1;
+    }
+  }
+  for (const token of goalTokens) {
+    frequencies.set(token, actionDocumentFrequency(snapshot, token, isCandidate));
+  }
+  const genericAt = Math.max(2, Math.ceil(candidateCount * 0.25));
+
+  const frequencyOf = (token: string): number => {
+    const cached = frequencies.get(token);
+    if (cached !== undefined) return cached;
+    const computed = actionDocumentFrequency(snapshot, token, isCandidate);
+    frequencies.set(token, computed);
+    return computed;
+  };
+  const pageFrequency = new Map<string, number>();
+  const pageFrequencyOf = (token: string): number => {
+    const cached = pageFrequency.get(token);
+    if (cached !== undefined) return cached;
+    const computed = snapshot.pages.filter(
+      (page) => tokenOverlap(pageSearchText(page), new Set([token])) > 0,
+    ).length;
+    pageFrequency.set(token, computed);
+    return computed;
+  };
+  const rareTokenWeight = (token: string): number => {
+    const pagesWithToken = pageFrequencyOf(token);
+    return pagesWithToken === 0 ? 0 : snapshot.pages.length / pagesWithToken;
+  };
+  const pageWeights = snapshot.pages.map((page) =>
+    weightedTokenOverlap(
+      `${page.title} ${page.blocks.map((block) => block.text).join(" ")}`,
+      distinctiveTokenSet(goalTokens, frequencies, genericAt),
+      rareTokenWeight,
+    ),
+  );
+  const bestPageWeight = Math.max(0, ...pageWeights);
+  const bestPage = snapshot.pages.find(
+    (_page, index) => bestPageWeight > 0 && pageWeights[index] === bestPageWeight,
+  );
+  const bestPageText = bestPage === undefined
+    ? ""
+    : `${bestPage.title} ${bestPage.blocks.map((block) => block.text).join(" ")}`;
+  const bestPageMetadata = bestPage === undefined
+    ? ""
+    : `${bestPage.title} ${bestPage.url}`;
 
   const candidates = snapshot.pages.flatMap((page) =>
     page.actions
-      .filter((action) => {
-        const length = action.label.trim().length;
-        return action.visible && length > 0 && length <= 200;
-      })
+      .filter(isCandidate)
       .map((action) => {
         const overlap = tokenOverlap(action.label, goalTokens);
+        const labelDistinctive = distinctiveOverlap(action.label, goalTokens, frequencies, genericAt);
+        const contextDistinctive = distinctiveOverlap(
+          actionContextText(page, action),
+          goalTokens,
+          frequencies,
+          genericAt,
+        );
         const actionTokens = normalizedTokens(action.label);
+        const distinctiveActionTokens = new Set(
+          [...actionTokens].filter((token) => frequencyOf(token) <= genericAt),
+        );
+        const mentionWeight = bestPageText === ""
+          ? 0
+          : weightedTokenOverlap(
+            bestPageText,
+            distinctiveActionTokens.size > 0 ? distinctiveActionTokens : actionTokens,
+            rareTokenWeight,
+          );
+        const metadataWeight = bestPageMetadata === ""
+          ? 0
+          : weightedTokenOverlap(
+            bestPageMetadata,
+            distinctiveActionTokens.size > 0 ? distinctiveActionTokens : actionTokens,
+            rareTokenWeight,
+          );
         return {
           action,
           overlap,
+          labelDistinctive,
+          contextDistinctive,
+          mentionWeight,
+          metadataWeight,
+          pageWeight: pageWeights[snapshot.pages.indexOf(page)] ?? 0,
           specificity: actionTokens.size,
           coverage: actionTokens.size === 0 ? 0 : overlap / actionTokens.size,
-          operational: action.kind === "link" ? 0 : 1,
+          operational: action.kind === "link" ? 0 : action.kind === "form_submit" ? 2 : 1,
           enabled: action.enabled ? 1 : 0,
         };
       })
-      .filter((candidate) => candidate.overlap > 0),
+      .filter((candidate) =>
+        candidate.labelDistinctive > 0 || candidate.mentionWeight > 0 || candidate.overlap > 0
+      ),
   );
 
   candidates.sort(
     (left, right) =>
-      right.coverage - left.coverage ||
-      right.overlap - left.overlap ||
+      right.labelDistinctive - left.labelDistinctive ||
+      right.metadataWeight - left.metadataWeight ||
+      right.mentionWeight - left.mentionWeight ||
       right.operational - left.operational ||
+      right.pageWeight - left.pageWeight ||
+      right.contextDistinctive - left.contextDistinctive ||
+      right.overlap - left.overlap ||
       right.specificity - left.specificity ||
+      right.coverage - left.coverage ||
       right.enabled - left.enabled ||
       left.action.label.localeCompare(right.action.label) ||
       left.action.id.localeCompare(right.action.id),
   );
   const best = candidates[0];
-  return best === undefined
+  const runnerUp = candidates[1];
+  if (best === undefined) return undefined;
+  const bestScore = best.labelDistinctive + (best.mentionWeight > 0 ? 1 : 0);
+  if (bestScore === 0 && best.overlap > 0) {
+    // A match that uses only site-wide action vocabulary is not a derived purpose.
+    return undefined;
+  }
+  if (
+    runnerUp !== undefined &&
+    runnerUp.labelDistinctive === best.labelDistinctive &&
+    runnerUp.mentionWeight === best.mentionWeight &&
+    runnerUp.operational === best.operational &&
+    runnerUp.overlap === best.overlap
+  ) {
+    const bestDistinctive = [...normalizedTokens(best.action.label)]
+      .filter((token) => (frequencies.get(token) ?? 0) <= genericAt);
+    const runnerDistinctive = [...normalizedTokens(runnerUp.action.label)]
+      .filter((token) => (frequencies.get(token) ?? 0) <= genericAt);
+    const shared = bestDistinctive.some((token) =>
+      runnerDistinctive.some((other) => tokensRelated(token, other)),
+    );
+    if (!shared && bestDistinctive.length > 0 && runnerDistinctive.length > 0) {
+      return undefined;
+    }
+  }
+  const directlySupportedPurposeTokens = (candidate: NonNullable<typeof best>): readonly string[] =>
+    [...normalizedTokens(candidate.action.label)].filter((token) =>
+      frequencyOf(token) <= genericAt &&
+      [...goalTokens].some((goalToken) => tokensRelated(token, goalToken))
+    );
+  const bestSupportedTokens = directlySupportedPurposeTokens(best);
+  const explicitlyUncertain =
+    /\b(?:do\s+not\s+know|don't\s+know|not\s+sure|uncertain|unclear)\b/iu.test(userGoal);
+  if (explicitlyUncertain && bestSupportedTokens.length > 0) {
+    const incompatiblePurpose = candidates.slice(1).find((candidate) => {
+      const supportedTokens = directlySupportedPurposeTokens(candidate);
+      return supportedTokens.length > 0 &&
+        !bestSupportedTokens.some((token) =>
+          supportedTokens.some((other) => tokensRelated(token, other))
+        );
+    });
+    if (incompatiblePurpose !== undefined) return undefined;
+  }
+  return { primaryActionPurpose: best.action.label };
+}
+
+function explicitUncertaintyAlternatives(userGoal: string): readonly [string, string] | undefined {
+  const explicitlyUncertain =
+    /\b(?:do\s+not\s+know|don't\s+know|not\s+sure|uncertain|unclear)\b/iu.test(userGoal);
+  if (!explicitlyUncertain) return undefined;
+  const match = /\b(?:whether|if)\b\s+([^?;.!]{1,200}?)\s+\bor\b\s+([^?;.!]{1,200})/iu.exec(userGoal);
+  const left = match?.[1]?.trim();
+  const right = match?.[2]?.trim();
+  return left === undefined || right === undefined || left.length === 0 || right.length === 0
     ? undefined
-    : { primaryActionPurpose: best.action.label };
+    : [left, right];
+}
+
+export function deriveObservedGoalScope(
+  snapshot: SiteSnapshot,
+  userGoal: string,
+): GoalScopedExtraction | undefined {
+  const scope = deriveObservedGoalScopeCandidate(snapshot, userGoal);
+  const alternatives = explicitUncertaintyAlternatives(userGoal);
+  if (alternatives === undefined) return scope;
+
+  const alternativeScopes = alternatives.map((alternative) => ({
+    alternative,
+    scope: deriveObservedGoalScopeCandidate(snapshot, alternative),
+  }));
+  if (alternativeScopes.some((alternative) => alternative.scope === undefined)) return scope;
+
+  const groundedPurposes = alternativeScopes.map(({ alternative, scope: alternativeScope }) => {
+    if (alternativeScope === undefined) return undefined;
+    const selection = selectFocusedSources(
+      snapshot,
+      alternative,
+      { maxPages: 9, maxBlocks: 80, maxActions: 35 },
+      alternativeScope,
+    );
+    return selection.coverage === "complete"
+      ? alternativeScope.primaryActionPurpose
+      : undefined;
+  });
+  if (
+    groundedPurposes.every((purpose): purpose is string => purpose !== undefined) &&
+    new Set(groundedPurposes).size > 1
+  ) {
+    return undefined;
+  }
+  return scope;
 }
 
 function pageTargetIndex(snapshot: SiteSnapshot): ReadonlyMap<string, number> {
@@ -384,6 +693,25 @@ function contextualBlockIndexes(
     const block = page.blocks[index];
     if (block !== undefined && isLikelyHeading(block.text) && index + 1 < page.blocks.length) {
       result.add(index + 1);
+    }
+  }
+  // A colon-introduced requirement list is one evidence unit. Retaining only
+  // adjacent matches can otherwise omit a mandatory item in the middle while
+  // keeping the introduction and final restriction. Keep this bounded and stop
+  // at the first sentence-terminating item.
+  for (const index of [...result]) {
+    const block = page.blocks[index];
+    if (
+      block === undefined ||
+      !directIndexes.has(index) ||
+      !/\b(?:requires|need(?:s|ed)?\s+to):\s*$/iu.test(block.text.trim())
+    ) continue;
+    const finalIndex = Math.min(page.blocks.length - 1, index + 8);
+    for (let candidate = index + 1; candidate <= finalIndex; candidate += 1) {
+      const item = page.blocks[candidate];
+      if (item === undefined) break;
+      result.add(candidate);
+      if (/[.!?]["')\]]?\s*$/u.test(item.text.trim())) break;
     }
   }
   return result;
@@ -494,8 +822,21 @@ function rankGeneralPages(
 function rankGoalScopedPages(
   snapshot: SiteSnapshot,
   scope: ParsedGoalScopedExtraction,
+  userGoal: string,
 ): readonly RankedPage[] {
   const intents = intentProfiles(snapshot, scope);
+  const goalTokens = normalizedTokens(userGoal);
+  const isCandidate = createPurposeCandidateFilter(snapshot);
+  const goalFrequencies = new Map<string, number>(
+    [...goalTokens].map((token) => [token, actionDocumentFrequency(snapshot, token, isCandidate)] as const),
+  );
+  const genericAt = Math.max(2, Math.ceil(
+    snapshot.pages.reduce(
+      (count, page) => count + page.actions.filter(isCandidate).length,
+      0,
+    ) * 0.25,
+  ));
+  const distinctiveGoalTokens = distinctiveTokenSet(goalTokens, goalFrequencies, genericAt);
   const targetIndexes = pageTargetIndex(snapshot);
   const candidates = snapshot.pages.map((page) => {
     const directBlockIndexes = new Set<number>();
@@ -514,11 +855,22 @@ function rankGoalScopedPages(
         reasons.add(intent.primary ? "primary-intent page metadata" : "fallback-intent page metadata");
       }
       page.blocks.forEach((block, blockIndex) => {
-        if (!matchesIntent(block.text, intent)) return;
+        const intentMatch = matchesIntent(block.text, intent);
+        const goalHits = distinctiveGoalTokens.size === 0
+          ? 0
+          : tokenOverlap(block.text, distinctiveGoalTokens);
+        const goalMatch = !intentMatch && goalHits >= 2;
+        if (!intentMatch && !goalMatch) return;
         directBlockIndexes.add(blockIndex);
         score += weight + (POLICY_SIGNAL.test(block.text) ? weight : 0);
         priority = Math.min(priority, intentPriority);
-        reasons.add(intent.primary ? "primary-intent evidence" : "fallback-intent evidence");
+        reasons.add(
+          goalMatch
+            ? "distinctive goal evidence"
+            : intent.primary
+              ? "primary-intent evidence"
+              : "fallback-intent evidence",
+        );
       });
       page.actions.forEach((action) => {
         if (!matchesIntent(action.label, intent)) return;
@@ -570,20 +922,27 @@ function rankGoalScopedPages(
       const matchesScopedIntent = intents.some((intent) => matchesIntent(action.label, intent));
       const explicitlyNamesPolicyContext = REFERENCED_POLICY_LINK_SIGNAL.test(action.label);
       if (!labelIsReferenced && !matchesScopedIntent && !explicitlyNamesPolicyContext) continue;
-      selectedIndexes.add(targetIndex);
       source.actionIds.add(action.id);
       source.reasons.add("observed link to relevant policy context");
       const target = candidates[targetIndex];
-      if (target !== undefined) {
-        if (!target.directRelevant) {
-          target.priority = source.priority;
-          target.score = Math.max(target.score, source.score - 1);
-        }
-        target.reasons.add("one-hop referenced policy context");
-        if (target.blockIndexes.size === 0) {
-          target.page.blocks.forEach((_block, blockIndex) => target.blockIndexes.add(blockIndex));
-        }
+      if (target === undefined) continue;
+      if (target.blockIndexes.size === 0) {
+        target.page.blocks.forEach((block, blockIndex) => {
+          if (intents.some((intent) => matchesIntent(block.text, intent)) || POLICY_SIGNAL.test(block.text)) {
+            target.blockIndexes.add(blockIndex);
+          }
+        });
+        target.blockIndexes = new Set(contextualBlockIndexes(target.page, target.blockIndexes));
       }
+      if (target.blockIndexes.size === 0 && target.actionIds.size === 0 && !target.directRelevant) {
+        continue;
+      }
+      selectedIndexes.add(targetIndex);
+      if (!target.directRelevant) {
+        target.priority = source.priority + 1;
+        target.score += 1;
+      }
+      target.reasons.add("one-hop referenced policy context");
     }
   }
 
@@ -622,7 +981,7 @@ export function selectFocusedSources(
     : GoalScopedExtractionSchema.parse(goalScopeInput);
   const rankedPages = goalScope === undefined
     ? rankGeneralPages(snapshot, userGoal)
-    : rankGoalScopedPages(snapshot, goalScope);
+    : rankGoalScopedPages(snapshot, goalScope, userGoal);
   const goalTokens = normalizedTokens(userGoal);
   const selectedPageUrls = new Set(
     rankedPages.flatMap((entry) => [entry.page.url, entry.page.canonicalUrl]),
@@ -685,17 +1044,26 @@ export function selectFocusedSources(
   }
   if (goalScope !== undefined) {
     const intents = intentProfiles(snapshot, goalScope);
+    const observedPurposeLabels = new Set(
+      snapshot.pages.flatMap((page) =>
+        page.actions.filter(createPurposeCandidateFilter(snapshot)).map((action) => action.label),
+      ),
+    );
     for (const intent of intents) {
       const hasAction = selectedPages.some((page) =>
         page.actions.some((action) => matchesIntent(action.label, intent)),
       );
+      const hasTargetAction = !observedPurposeLabels.has(intent.purpose) ||
+        selectedPages.some((page) =>
+          page.actions.some((action) => action.label === intent.purpose),
+        );
       const hasOperativePolicyEvidence = selectedPages.some((page) =>
         page.blocks.some((block) => isOperativePolicyText(block.text, intent)),
       );
       const scopeLabel = intent.primary
         ? "the primary goal-scoped action purpose"
         : `the alternative goal-scoped action purpose: ${intent.purpose}`;
-      if (!hasAction) {
+      if (!hasAction || !hasTargetAction) {
         limitations.push(`No observed WebsiteAction matched ${scopeLabel}.`);
       }
       if (!hasOperativePolicyEvidence) {

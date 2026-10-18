@@ -181,8 +181,10 @@ function isFactOperator(value: z.infer<typeof FactOperatorSchema>): value is Fac
 /**
  * Converts Claude's compact, grammar-safe DTO into the canonical contract. The
  * conversion is pure and never repairs arbitrary references, conditions, or policy
- * effects. It records and omits only a rule target WebsiteAction copied into a
- * citation for a different page; that binding remains on the ProcedureAction.
+ * effects. Citation-local WebsiteActions are source provenance and remain valid
+ * without becoming ProcedureActions. It records and omits only a rule target
+ * WebsiteAction copied into a citation for a different page; that binding remains
+ * on the ProcedureAction.
  */
 export function convertCompactExtraction(
   input: unknown,
@@ -244,7 +246,6 @@ export function convertCompactExtraction(
 
   const actions: Array<Record<string, unknown>> = [];
   const procedureActions = new Map<string, CompactExtractionDTO["actions"][number]>();
-  const representedWebsiteActionIds = new Set<string>();
   for (const action of dto.actions) {
     if (procedureActions.has(action.id)) addIssue(`Duplicate procedure action: ${action.id}.`);
     else procedureActions.set(action.id, action);
@@ -257,8 +258,6 @@ export function convertCompactExtraction(
       addIssue(`Browser-backed action ${action.id} requires a websiteActionId.`);
     } else if (!websiteActions.has(action.websiteActionId)) {
       addIssue(`Action ${action.id} references unsupported website action ${action.websiteActionId}.`);
-    } else {
-      representedWebsiteActionIds.add(action.websiteActionId);
     }
 
     actions.push({
@@ -480,11 +479,6 @@ export function convertCompactExtraction(
             `Rule ${rule.id} citation WebsiteAction ${websiteActionId} belongs to page ${binding.page.id}, not cited page ${page.id}.`,
           );
           continue;
-        }
-        if (!representedWebsiteActionIds.has(websiteActionId)) {
-          addIssue(
-            `Rule ${rule.id} citation WebsiteAction ${websiteActionId} is not represented by a declared browser procedure action.`,
-          );
         }
       }
     }

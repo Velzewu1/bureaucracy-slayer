@@ -118,19 +118,19 @@ describe("goal-focused source selection", () => {
         goal: "Can I cancel a scheduled Standard transfer before processing starts?",
         purpose: "Cancel transfer",
         requiredBlockId: "block_c6e0f05342f8d9849468",
-        expectedCounts: { pages: 9, blocks: 70, actions: 20 },
+        expectedCounts: { pages: 9, blocks: 65, actions: 23 },
       },
       {
         goal: "Can I request recovery for a completed transfer?",
         purpose: "Request recovery of a completed transfer",
         requiredBlockId: "block_dd35d4ab423bc204bf21",
-        expectedCounts: { pages: 7, blocks: 66, actions: 15 },
+        expectedCounts: { pages: 9, blocks: 68, actions: 24 },
       },
       {
         goal: "What information do I need to submit a recovery request?",
         purpose: "Submit recovery request",
         requiredBlockId: "block_b9b4f21bf280d76622d6",
-        expectedCounts: { pages: 8, blocks: 62, actions: 20 },
+        expectedCounts: { pages: 9, blocks: 69, actions: 27 },
       },
     ] as const;
 
@@ -156,6 +156,177 @@ describe("goal-focused source selection", () => {
       .toEqual(cases.map(({ purpose }) => purpose));
     expect(new Set(selections.map((selection) => JSON.stringify(selection.pages))).size).toBe(3);
     expect(deriveObservedGoalScope(snapshot, "How do I close my mortgage?")).toBeUndefined();
+  });
+
+  it("derives unauthorized reporting instead of cancellation or mistaken recovery", () => {
+    const snapshot = RecordedExtractionBundleSchema.parse(
+      recordedSonnetBundleInput,
+    ).sourceSnapshot;
+    const budget = { maxPages: 9, maxBlocks: 80, maxActions: 35 } as const;
+    const unauthorizedGoals = [
+      "I found a transfer I did not authorize. What should I do?",
+      "A transfer was made without my permission. How do I report it?",
+      "Someone sent money from my account without my authorization.",
+    ] as const;
+    const purposes = unauthorizedGoals.map((goal) => deriveObservedGoalScope(snapshot, goal)?.primaryActionPurpose);
+    expect(purposes.every((purpose) => purpose !== undefined && /unauthorized/i.test(purpose))).toBe(true);
+    expect(purposes.every((purpose) => purpose !== "Cancel transfer")).toBe(true);
+    expect(purposes.every((purpose) => purpose === undefined || !/mistaken|recovery/i.test(purpose))).toBe(true);
+
+    for (const goal of unauthorizedGoals) {
+      const scope = deriveObservedGoalScope(snapshot, goal);
+      const selection = selectFocusedSources(snapshot, goal, budget, scope);
+      const actionLabels = selection.pages.flatMap((page) => page.actions.map((action) => action.label));
+      expect(selection.coverage).toBe("complete");
+      expect(selection.selectedCounts.pages).toBeLessThanOrEqual(9);
+      expect(selection.selectedCounts.blocks).toBeLessThanOrEqual(80);
+      expect(selection.selectedCounts.actions).toBeLessThanOrEqual(35);
+      expect(actionLabels.some((label) => /unauthorized/i.test(label))).toBe(true);
+      expect(actionLabels).toContain(scope?.primaryActionPurpose);
+      expect(selectedBlockIds(selection)).toContain("block_8e2ce14c3ab15f83b3fe");
+    }
+
+    const mistakenGoal = "I mistakenly sent money to the wrong recipient.";
+    const mistakenPurpose = deriveObservedGoalScope(snapshot, mistakenGoal)?.primaryActionPurpose;
+    expect(mistakenPurpose).toMatch(/mistaken|recovery/i);
+    expect(mistakenPurpose === undefined || /unauthorized/i.test(mistakenPurpose)).toBe(false);
+  });
+
+  it("derives cancellation from a grounded stop-before-processing paraphrase", () => {
+    const snapshot = RecordedExtractionBundleSchema.parse(
+      recordedSonnetBundleInput,
+    ).sourceSnapshot;
+    const goal = "Could I stop a scheduled Standard transfer before it starts processing?";
+    const scope = deriveObservedGoalScope(snapshot, goal);
+    const selection = selectFocusedSources(
+      snapshot,
+      goal,
+      { maxPages: 9, maxBlocks: 80, maxActions: 35 },
+      scope,
+    );
+
+    expect(scope?.primaryActionPurpose).toBe("Cancel transfer");
+    expect(selection.coverage).toBe("complete");
+    expect(selectedActionIds(selection)).toContain("action_cec971f543cc085511e5");
+    expect(selectedBlockIds(selection)).toContain("block_fc059175893c4915951c");
+  });
+
+  it("fails closed when the goal explicitly names incompatible observed purposes", () => {
+    const snapshot = RecordedExtractionBundleSchema.parse(
+      recordedSonnetBundleInput,
+    ).sourceSnapshot;
+
+    const goals = [
+      "I do not know whether I should cancel this transfer or report it as unauthorized.",
+      "I sent money but I am not sure whether it was a mistake or fraud. What should I do?",
+    ] as const;
+
+    for (const goal of goals) {
+      expect(deriveObservedGoalScope(snapshot, goal)).toBeUndefined();
+    }
+  });
+
+  it("keeps explicit single-purpose requests distinct and unsupported goals closed", () => {
+    const snapshot = RecordedExtractionBundleSchema.parse(
+      recordedSonnetBundleInput,
+    ).sourceSnapshot;
+    const cases = [
+      {
+        goal: "I made this transfer by mistake. Submit a mistaken transfer report.",
+        purpose: "Submit mistaken transfer report",
+        actionId: "action_1a4c47be86f1e1e46e08",
+      },
+      {
+        goal: "I did not authorize this transfer. Submit an unauthorized transfer report.",
+        purpose: "Submit unauthorized transfer report",
+        actionId: "action_d230d16f5b8ae26d7990",
+      },
+    ] as const;
+
+    for (const { goal, purpose, actionId } of cases) {
+      const scope = deriveObservedGoalScope(snapshot, goal);
+      const selection = selectFocusedSources(
+        snapshot,
+        goal,
+        { maxPages: 9, maxBlocks: 80, maxActions: 35 },
+        scope,
+      );
+      expect(scope?.primaryActionPurpose).toBe(purpose);
+      expect(selection.coverage).toBe("complete");
+      expect(selection.selectedCounts.pages).toBeLessThanOrEqual(9);
+      expect(selection.selectedCounts.blocks).toBeLessThanOrEqual(80);
+      expect(selection.selectedCounts.actions).toBeLessThanOrEqual(35);
+      expect(selectedActionIds(selection)).toContain(actionId);
+    }
+
+    expect(deriveObservedGoalScope(snapshot, "How do I close my mortgage?")).toBeUndefined();
+    expect(deriveObservedGoalScope(snapshot, "Will it rain tomorrow?")).toBeUndefined();
+  });
+
+  it("keeps the exact completed-recovery goal inside the focused budget with FAQ coverage", () => {
+    const snapshot = RecordedExtractionBundleSchema.parse(
+      recordedSonnetBundleInput,
+    ).sourceSnapshot;
+    const goal = "I sent a completed transfer to the wrong recipient. How can I recover it?";
+    const scope = deriveObservedGoalScope(snapshot, goal);
+    const selection = selectFocusedSources(
+      snapshot,
+      goal,
+      { maxPages: 9, maxBlocks: 80, maxActions: 35 },
+      scope,
+    );
+    const blockIds = selectedBlockIds(selection);
+    const actionLabels = selection.pages.flatMap((page) => page.actions.map((action) => action.label));
+
+    expect(scope?.primaryActionPurpose).toMatch(/recover/i);
+    expect(selection.coverage).toBe("complete");
+    expect(selection.selectedCounts.pages).toBeLessThanOrEqual(9);
+    expect(selection.selectedCounts.blocks).toBeLessThanOrEqual(80);
+    expect(selection.selectedCounts.actions).toBeLessThanOrEqual(35);
+    expect(blockIds).toContain("block_eef1c957489ad4e255e6");
+    expect(blockIds).toContain("block_8bb8dc91e491d3813852");
+    expect(blockIds).toContain("block_09f299055686b41683ed");
+    expect(actionLabels.some((label) => /recover/i.test(label))).toBe(true);
+    expect(selectFocusedSources(
+      snapshot,
+      goal,
+      { maxPages: 9, maxBlocks: 80, maxActions: 35 },
+      scope,
+    )).toEqual(selection);
+  });
+
+  it("does not mark coverage complete when the required target action is omitted", () => {
+    const snapshot = RecordedExtractionBundleSchema.parse(
+      recordedSonnetBundleInput,
+    ).sourceSnapshot;
+    const selection = selectFocusedSources(
+      snapshot,
+      "I found a transfer I did not authorize. What should I do?",
+      { maxPages: 9, maxBlocks: 80, maxActions: 35 },
+      { primaryActionPurpose: "Submit unauthorized transfer report" },
+    );
+    const withoutTarget = {
+      ...selection,
+      pages: selection.pages.map((page) => ({
+        ...page,
+        actions: page.actions.filter((action) => action.label !== "Submit unauthorized transfer report"),
+      })),
+    };
+    const recounted = selectFocusedSources(
+      snapshot,
+      "I found a transfer I did not authorize. What should I do?",
+      { maxPages: 1, maxBlocks: 4, maxActions: 1 },
+      { primaryActionPurpose: "Submit unauthorized transfer report" },
+    );
+
+    expect(selectedActionIds(selection)).toContain("action_d230d16f5b8ae26d7990");
+    expect(withoutTarget.pages.some((page) =>
+      page.actions.some((action) => action.label === "Submit unauthorized transfer report"),
+    )).toBe(false);
+    expect(recounted.coverage).toBe("incomplete");
+    expect(recounted.limitations).toEqual(expect.arrayContaining([
+      "No observed WebsiteAction matched the primary goal-scoped action purpose.",
+    ]));
   });
 
   it("recovers the recorded operative permissions, exceptions, eligibility, and cancel control", () => {

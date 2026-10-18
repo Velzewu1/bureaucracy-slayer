@@ -64,6 +64,74 @@ function qualifiedCancellationScenario() {
 }
 
 describe("two-stage deterministic conversion", () => {
+  it("assigns deterministic canonical identity to a numeric-prefix technical model id", () => {
+    const fixture = stages();
+    fixture.mapping.id = "stage2_unauthorized_transfer_report";
+
+    const first = convertStagedExtraction(fixture.policy, fixture.mapping, snapshot, catalog);
+    const second = replayStagedExtraction(fixture.policy, fixture.mapping, snapshot, catalog);
+
+    expect(first).toEqual(second);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    expect(first.model.id).toMatch(/^procedure_[a-f0-9]{64}$/u);
+    expect(first.compactDto.id).toBe(first.model.id);
+    expect(first.normalizations).toContainEqual({
+      code: "CANONICAL_PROCEDURE_MODEL_ID_ASSIGNED",
+      originalProcedureModelId: "stage2_unauthorized_transfer_report",
+      canonicalProcedureModelId: first.model.id,
+    });
+    expect(fixture.mapping.id).toBe("stage2_unauthorized_transfer_report");
+  });
+
+  it("preserves an existing valid procedure model id", () => {
+    const fixture = stages();
+    const originalId = fixture.mapping.id;
+
+    const converted = convertStagedExtraction(fixture.policy, fixture.mapping, snapshot, catalog);
+
+    expect(converted.ok).toBe(true);
+    if (!converted.ok) return;
+    expect(converted.model.id).toBe(originalId);
+    expect(converted.normalizations.some(
+      (normalization) => normalization.code === "CANONICAL_PROCEDURE_MODEL_ID_ASSIGNED",
+    )).toBe(false);
+  });
+
+  it("does not broadly sanitize unrelated malformed model ids", () => {
+    const fixture = stages();
+    fixture.mapping.id = "Bad model id!";
+
+    const converted = convertStagedExtraction(fixture.policy, fixture.mapping, snapshot, catalog);
+
+    expect(converted.ok).toBe(false);
+    if (converted.ok) return;
+    expect(converted.stage).toBe("canonical_schema");
+    expect(converted.normalizations.some(
+      (normalization) => normalization.code === "CANONICAL_PROCEDURE_MODEL_ID_ASSIGNED",
+    )).toBe(false);
+  });
+
+  it("does not relax canonical action or rule identifiers", () => {
+    const fixture = stages();
+    const converted = convertStagedExtraction(
+      fixture.policy,
+      fixture.mapping,
+      snapshot,
+      catalog,
+    );
+    expect(converted.ok).toBe(true);
+    if (!converted.ok) return;
+
+    const invalidAction = structuredClone(converted.model);
+    invalidAction.actions[0]!.id = "stage2_invalid_action";
+    expect(ProcedureModelSchema.safeParse(invalidAction).success).toBe(false);
+
+    const invalidRule = structuredClone(converted.model);
+    invalidRule.rules[0]!.id = "stage2_invalid_rule";
+    expect(ProcedureModelSchema.safeParse(invalidRule).success).toBe(false);
+  });
+
   it("deterministically normalizes unique internal rule IDs and preserves policy semantics", () => {
     const fixture = stages();
     const originalRule = fixture.policy.rules[0]!;
@@ -395,6 +463,79 @@ describe("two-stage deterministic conversion", () => {
       .toEqual([]);
     expect(result.model.actions.find((action) => action.id === "proc_cancel01")?.websiteActionId)
       .toBe("action_cancel01");
+  });
+
+  it("keeps citation-only actions independent from the Stage 2 procedure graph", () => {
+    const fixture = stages();
+    const openAction = fixture.mapping.actions.find((action) => action.id === "proc_open001");
+    if (openAction === undefined) throw new TypeError("Missing open action");
+    openAction.websiteActionId = "action_cancel01";
+    const originalActionCount = fixture.mapping.actions.length;
+
+    const mapping = validateProcedureMapping(fixture.mapping, fixture.policy, catalog);
+    expect(mapping.ok).toBe(true);
+    const converted = convertStagedExtraction(fixture.policy, fixture.mapping, snapshot, catalog);
+
+    expect(converted.ok).toBe(true);
+    if (!converted.ok) return;
+    expect(converted.model.rules.find((rule) => rule.id === "rule_openpermit1")?.citations[0]?.actionIds)
+      .toEqual(["action_open001"]);
+    expect(converted.model.actions).toHaveLength(originalActionCount);
+    expect(converted.model.actions.some((action) => action.websiteActionId === "action_open001"))
+      .toBe(false);
+  });
+
+  it("revalidates citation action identity at the Stage 2 boundary", () => {
+    const missing = stages();
+    missing.policy.rules[0]!.citations[0]!.websiteActionIds = ["action_invented01"];
+    const missingResult = validateProcedureMapping(missing.mapping, missing.policy, catalog);
+    expect(missingResult.ok).toBe(false);
+    if (missingResult.ok) return;
+    expect(missingResult.issues).toContain(
+      "Stage 2 policy rule rule_openpermit1 citation WebsiteAction action_invented01 is not on cited page page_policy001.",
+    );
+
+    const crossPage = stages();
+    crossPage.policy.rules[0]!.citations[0]!.websiteActionIds = ["action_cancel01"];
+    const crossPageResult = validateProcedureMapping(crossPage.mapping, crossPage.policy, catalog);
+    expect(crossPageResult.ok).toBe(false);
+    if (crossPageResult.ok) return;
+    expect(crossPageResult.issues).toContain(
+      "Stage 2 policy rule rule_openpermit1 citation WebsiteAction action_cancel01 is not on cited page page_policy001.",
+    );
+  });
+
+  it("preserves one citation-only action shared by multiple rules without adding actions", () => {
+    const fixture = stages();
+    const cancellation = fixture.policy.rules.find((rule) => rule.id === "rule_cancelpermit1");
+    const prohibition = fixture.policy.rules.find((rule) => rule.id === "rule_instantdeny1");
+    const openAction = fixture.mapping.actions.find((action) => action.id === "proc_open001");
+    if (
+      cancellation?.citations[0] === undefined ||
+      prohibition?.citations[0] === undefined ||
+      openAction === undefined
+    ) {
+      throw new TypeError("Missing shared-citation fixture data");
+    }
+    cancellation.citations[0].websiteActionIds = ["action_open001"];
+    prohibition.citations[0].websiteActionIds = ["action_open001"];
+    openAction.websiteActionId = "action_cancel01";
+    const originalActionCount = fixture.mapping.actions.length;
+
+    const converted = convertStagedExtraction(fixture.policy, fixture.mapping, snapshot, catalog);
+
+    expect(converted.ok).toBe(true);
+    if (!converted.ok) return;
+    expect(converted.model.rules.filter((rule) =>
+      rule.citations.some((citation) => citation.actionIds.includes("action_open001")))
+      .map((rule) => rule.id))
+      .toEqual(expect.arrayContaining([
+        "rule_cancelpermit1",
+        "rule_instantdeny1",
+      ]));
+    expect(converted.model.actions).toHaveLength(originalActionCount);
+    expect(converted.model.rules.find((rule) => rule.id === "rule_instantdeny1")?.effect)
+      .toBe("prohibit");
   });
 
   it("preserves exact citations, prohibitions, and alternatives across both stages", () => {
