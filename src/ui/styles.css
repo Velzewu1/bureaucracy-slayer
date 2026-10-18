@@ -2069,7 +2069,20 @@ main {
 }
 
 .why-summary span,
-.next-question > span,
+.next-question > span {
+  margin: 0 0 14px;
+  color: #3d4a44;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.comparison-unchanged {
+  margin: 0 0 14px;
+  color: #3d4a44;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
 .change-cause > span {
   color: #8fa39c;
   font-size: 0.58rem;

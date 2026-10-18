@@ -24,8 +24,12 @@ export function PlanComparison({ original, current }: PlanComparisonProps) {
             <h2 id="comparison-heading">What changed</h2>
           </div>
         </div>
-        <span className={`change-badge ${difference.changed ? "change-badge--changed" : ""}`}>
-          {difference.changed ? "Route changed" : "No route change"}
+        <span className={`change-badge ${difference.routeChanged ? "change-badge--changed" : ""}`}>
+          {difference.routeChanged
+            ? "Route changed"
+            : difference.factsChanged
+              ? "Facts updated"
+              : "No route change"}
         </span>
       </div>
 
@@ -43,8 +47,12 @@ export function PlanComparison({ original, current }: PlanComparisonProps) {
         </article>
       </div>
 
+      {difference.unchangedExplanation === undefined ? null : (
+        <p className="comparison-unchanged">{difference.unchangedExplanation}</p>
+      )}
+
       <div className="change-cause">
-        <span>Precise cause of replan</span>
+        <span>What was compared</span>
         {difference.changedFacts.length === 0 ? (
           <strong>No user fact value changed.</strong>
         ) : (

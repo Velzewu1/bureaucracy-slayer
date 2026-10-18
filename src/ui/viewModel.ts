@@ -9,6 +9,7 @@ import {
 } from "../contracts/index.js";
 import {
   buildDecisionTrace,
+  type FactInfluence,
   type RuleDecisionTrace,
 } from "../decision/index.js";
 import type { DemoAnalysis } from "./types.js";
@@ -52,6 +53,69 @@ export function factLabel(
   return (
     model.factDefinitions.find((definition) => definition.key === key)?.label ??
     key.replaceAll(".", " ").replaceAll("_", " ")
+  );
+}
+
+function isScalarList(
+  value: JsonScalar | readonly JsonScalar[],
+): value is readonly JsonScalar[] {
+  return Array.isArray(value);
+}
+
+function formatExpectedValue(value: JsonScalar | readonly JsonScalar[]): string {
+  if (isScalarList(value)) return value.map(formatScalar).join(", ");
+  return formatScalar(value);
+}
+
+function requiredPhrase(
+  operator: FactInfluence["operator"],
+  expected: JsonScalar | readonly JsonScalar[],
+): string {
+  const value = formatExpectedValue(expected);
+  switch (operator) {
+    case "eq":
+      return `Required: ${value}`;
+    case "neq":
+      return `Must not equal: ${value}`;
+    case "in":
+      return `Required one of: ${value}`;
+    case "not_in":
+      return `Excluded: ${value}`;
+    case "lt":
+      return `Must be less than: ${value}`;
+    case "lte":
+      return `Must be at most: ${value}`;
+    case "gt":
+      return `Must be greater than: ${value}`;
+    case "gte":
+      return `Must be at least: ${value}`;
+  }
+}
+
+export function formatFactInfluence(
+  model: DemoAnalysis["model"],
+  fact: FactInfluence,
+): string {
+  const answer =
+    fact.known && fact.actual !== undefined ? formatScalar(fact.actual) : "unknown";
+  const result =
+    fact.truth === "true"
+      ? "Condition met"
+      : fact.truth === "false"
+        ? "Condition not met"
+        : "Condition unresolved";
+  return `${factLabel(model, fact.key)} — ${requiredPhrase(fact.operator, fact.expected)} · Your answer: ${answer} · ${result}`;
+}
+
+export function isDecisiveRule(rule: Readonly<{
+  applicability: RuleConditionState;
+  evidenceState: RuleEvidenceState;
+  semanticReviewRequired: boolean;
+}>): boolean {
+  return (
+    rule.semanticReviewRequired ||
+    rule.evidenceState === "rejected" ||
+    rule.applicability !== "not_matched"
   );
 }
 
@@ -102,7 +166,57 @@ function uniqueMessages(messages: readonly (string | undefined)[]): string[] {
 
 export function actionReadinessPresentation(
   status: ActionEvaluation["status"],
+  reasonCodes: readonly string[] = [],
 ): StatusPresentation {
+  if (reasonCodes.includes("POLICY_CONFLICT")) {
+    return {
+      label: "Policy conflict",
+      tone: "warning",
+      summary: "Verified rules both permit and prohibit this action, so it needs review.",
+    };
+  }
+  if (reasonCodes.includes("PROHIBITED")) {
+    return {
+      label: "Action prohibited",
+      tone: "danger",
+      summary: "An active verified rule prohibits this action.",
+    };
+  }
+  if (reasonCodes.includes("REQUIREMENT_FAILED")) {
+    return {
+      label: "Required condition not met",
+      tone: "danger",
+      summary: "A mandatory condition for this action is not satisfied.",
+    };
+  }
+  if (reasonCodes.includes("NOT_PERMITTED")) {
+    return {
+      label: "No verified permission",
+      tone: "danger",
+      summary: "No active verified rule permits this action.",
+    };
+  }
+  if (reasonCodes.includes("EVIDENCE_REJECTED") || reasonCodes.includes("EVIDENCE_INVALID")) {
+    return {
+      label: "Evidence needs review",
+      tone: "warning",
+      summary: "The supporting evidence was not accepted, so this action is not authorized.",
+    };
+  }
+  if (reasonCodes.includes("MISSING_PREREQUISITE")) {
+    return {
+      label: "Prior step required",
+      tone: "warning",
+      summary: "A required earlier action is not available.",
+    };
+  }
+  if (reasonCodes.includes("MISSING_FACTS")) {
+    return {
+      label: "More information required",
+      tone: "warning",
+      summary: "The current action remains unresolved because required facts are unknown.",
+    };
+  }
   switch (status) {
     case "allowed":
       return {
@@ -112,9 +226,9 @@ export function actionReadinessPresentation(
       };
     case "forbidden":
       return {
-        label: "Action prohibited",
+        label: "Not authorized",
         tone: "danger",
-        summary: "The current action is prohibited by the authoritative decision.",
+        summary: "The deterministic decision does not authorize this action.",
       };
     case "review":
       return {
@@ -448,11 +562,40 @@ export function planDifference(original: DemoAnalysis, current: DemoAnalysis) {
         reasons: decision?.reasonCodes.map(readableReason) ?? [],
       };
     });
+  const stepsChanged = originalActionIds.join("|") !== currentActionIds.join("|");
+  const statusChanged = original.plan.status !== current.plan.status;
+  const decisionSignature = (analysis: DemoAnalysis): string =>
+    analysis.evaluation.decisions
+      .map((decision) => `${decision.actionId}:${decision.status}:${decision.reasonCodes.join(",")}`)
+      .sort()
+      .join("|");
+  const routeChanged = stepsChanged || statusChanged;
+  const outcomeUnchanged = !routeChanged;
+  const unchangedReason = current.decisionIntelligence.trace.decision.reasonCodes
+    .map(readableReason)
+    .join(" ");
   return {
-    changed:
-      original.plan.id !== current.plan.id ||
-      original.plan.status !== current.plan.status ||
-      originalActionIds.join("|") !== currentActionIds.join("|"),
+    changed: routeChanged,
+    factsChanged: changedFacts.length > 0,
+    ruleEvaluationsChanged: decisionSignature(original) !== decisionSignature(current),
+    selectedActionChanged:
+      original.decisionIntelligence.selectedActionId !==
+      current.decisionIntelligence.selectedActionId,
+    stepsChanged,
+    statusChanged,
+    decisionStatusChanged:
+      original.decisionIntelligence.trace.decision.status !==
+      current.decisionIntelligence.trace.decision.status,
+    routeChanged,
+    outcomeUnchanged,
+    ...(outcomeUnchanged
+      ? {
+          unchangedExplanation:
+            unchangedReason.length === 0
+              ? `The decision did not change. It is still ${planStatusPresentation(current.plan).label}.`
+              : `The decision did not change. It is still ${planStatusPresentation(current.plan).label} because ${unchangedReason.charAt(0).toLocaleLowerCase()}${unchangedReason.slice(1)}`,
+        }
+      : {}),
     originalStatus: planStatusPresentation(original.plan).label,
     currentStatus: planStatusPresentation(current.plan).label,
     removedActions: removedActionDetails.map((action) => action.label),

@@ -58,7 +58,19 @@ describe("evidence admissibility UI", () => {
 
   it("uses authoritative readiness labels for each action-decision state", () => {
     expect(actionReadinessPresentation("allowed").label).toBe("Action ready");
-    expect(actionReadinessPresentation("forbidden").label).toBe("Action prohibited");
+    expect(actionReadinessPresentation("forbidden").label).toBe("Not authorized");
+    expect(actionReadinessPresentation("forbidden", ["PROHIBITED"]).label).toBe(
+      "Action prohibited",
+    );
+    expect(actionReadinessPresentation("forbidden", ["NOT_PERMITTED"]).label).toBe(
+      "No verified permission",
+    );
+    expect(actionReadinessPresentation("forbidden", ["REQUIREMENT_FAILED"]).label).toBe(
+      "Required condition not met",
+    );
+    expect(actionReadinessPresentation("review", ["EVIDENCE_REJECTED"]).label).toBe(
+      "Evidence needs review",
+    );
     expect(actionReadinessPresentation("review").label).toBe("Human review required");
     expect(actionReadinessPresentation("indeterminate").label).toBe(
       "More information required",
@@ -161,5 +173,25 @@ describe("evidence admissibility UI", () => {
 
     expect(analysis.decisionIntelligence.counterfactuals).toEqual(before);
     expect(markup).toContain("Evidence admissibility is unchanged");
+  });
+
+  it("keeps citations available and collapses rules that do not decide the result", async () => {
+    const analysis = await new RecordedExtractionProvider({ now: fixedNow }).analyze({
+      goal: recordedExtractionBundle.extractionGoal,
+      portalUrl: recordedExtractionBundle.sourceSnapshot.rootUrl,
+      scenarioId: "dynamic-replanning",
+      userState: recordedExtractionBundle.defaultScenario.userState,
+    });
+    const markup = renderToStaticMarkup(
+      createElement(DecisionIntelligencePanel, { analysis }),
+    );
+
+    expect(markup).toContain("View policy evidence");
+    expect(markup).toContain("Required:");
+    expect(markup).toContain("Your answer:");
+    expect(markup).toContain("cannot repair that evidence limitation");
+    expect(markup).toContain('data-testid="nondecisive-rules"');
+    expect(markup).not.toContain("→ false");
+    expect(markup).not.toContain("→ true");
   });
 });

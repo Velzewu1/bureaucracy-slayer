@@ -38,7 +38,7 @@ export function ExcludedActionsPanel({ analysis }: ExcludedActionsPanelProps) {
               <div className="excluded-action__header">
                 <div>
                   <span className="decision-status">
-                    {actionReadinessPresentation(action.status).label}
+                    {actionReadinessPresentation(action.status, action.reasonCodes).label}
                   </span>
                   <h3>{action.label}</h3>
                 </div>

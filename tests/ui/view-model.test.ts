@@ -3,14 +3,18 @@ import { describe, expect, it } from "vitest";
 import { FixtureDemoProvider } from "../../src/ui/adapters/fixtureDemoProvider.js";
 import {
   demoGoal,
+  demoProcedureModel,
   demoSnapshot,
   scheduledInstantState,
   scheduledStandardState,
 } from "../../src/ui/fixtures/demoArtifacts.js";
 import {
+  actionReadinessPresentation,
   decisionTone,
   evidenceCards,
   excludedActions,
+  formatFactInfluence,
+  isDecisiveRule,
   planDifference,
   routeSteps,
   updateUserFact,
@@ -119,6 +123,119 @@ describe("UI view models", () => {
       ],
       snapshotUnchanged: true,
       evidenceUnchanged: true,
+      routeChanged: true,
     });
+  });
+
+  it("does not call a new plan id a route change when ready stays ready", async () => {
+    const demoProvider = provider();
+    const original = await demoProvider.analyze({
+      goal: demoGoal,
+      portalUrl: demoSnapshot.rootUrl,
+      scenarioId: "dynamic-replanning",
+      userState: scheduledStandardState,
+    });
+    const updated = await demoProvider.replan(original.sessionId, {
+      ...scheduledStandardState,
+      revision: original.plan.userStateRevision + 1,
+    });
+
+    expect(original.plan.id).not.toBe(updated.plan.id);
+    expect(original.plan.status).toBe("ready");
+    expect(updated.plan.status).toBe("ready");
+    expect(planDifference(original, updated)).toMatchObject({
+      changed: false,
+      routeChanged: false,
+      stepsChanged: false,
+      statusChanged: false,
+      factsChanged: false,
+      outcomeUnchanged: true,
+    });
+    expect(planDifference(original, updated).unchangedExplanation).toContain(
+      "did not change",
+    );
+  });
+
+  it("reports a fact change without calling an unchanged review a new route", async () => {
+    const demoProvider = provider();
+    const original = await demoProvider.analyze({
+      goal: demoGoal,
+      portalUrl: demoSnapshot.rootUrl,
+      scenarioId: "evidence-failure",
+      userState: scheduledStandardState,
+    });
+    const updated = await demoProvider.replan(original.sessionId, {
+      ...scheduledStandardState,
+      revision: original.plan.userStateRevision + 1,
+      facts: {
+        ...scheduledStandardState.facts,
+        "verification.complete": false,
+      },
+    });
+
+    const difference = planDifference(original, updated);
+    expect(original.plan.status).toBe("review_required");
+    expect(updated.plan.status).toBe("review_required");
+    expect(difference).toMatchObject({
+      changed: false,
+      routeChanged: false,
+      factsChanged: true,
+      stepsChanged: false,
+      outcomeUnchanged: true,
+    });
+    expect(difference.unchangedExplanation).toContain("Human review required");
+    expect(difference.unchangedExplanation).toContain("did not change");
+  });
+
+  it("names the required value separately from the user's answer", () => {
+    expect(
+      formatFactInfluence(demoProcedureModel, {
+        key: "payment.status",
+        operator: "eq",
+        expected: "completed",
+        known: true,
+        actual: "scheduled",
+        truth: "false",
+      }),
+    ).toBe(
+      "Transfer status — Required: completed · Your answer: scheduled · Condition not met",
+    );
+    expect(
+      formatFactInfluence(demoProcedureModel, {
+        key: "payment.status",
+        operator: "eq",
+        expected: "instant",
+        known: true,
+        actual: "instant",
+        truth: "true",
+      }),
+    ).toContain("Condition met");
+  });
+
+  it("keeps matched prohibitions visible and collapses inactive rules", () => {
+    expect(
+      isDecisiveRule({
+        applicability: "matched",
+        evidenceState: "verified",
+        semanticReviewRequired: false,
+      }),
+    ).toBe(true);
+    expect(
+      isDecisiveRule({
+        applicability: "not_matched",
+        evidenceState: "verified",
+        semanticReviewRequired: false,
+      }),
+    ).toBe(false);
+    expect(
+      isDecisiveRule({
+        applicability: "not_matched",
+        evidenceState: "rejected",
+        semanticReviewRequired: true,
+      }),
+    ).toBe(true);
+    expect(actionReadinessPresentation("forbidden", ["NOT_PERMITTED"]).label).not.toBe(
+      actionReadinessPresentation("forbidden", ["PROHIBITED"]).label,
+    );
   });
 });
